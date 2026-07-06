@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="晚餐决策助手,每天 30 秒决定今晚自己做、点外卖还是出去吃。"
+    />
+    <meta name="theme-color" content="#f7f5f0" />
+    <title>晚餐决策助手</title>
+    <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell" id="app">
+      <header class="app-header">
+        <div>
+          <h1>晚餐决策助手</h1>
+          <p id="profileSummary">2 人 · 微辣 · ¥30-60/人</p>
+        </div>
+        <button class="icon-button" id="settingsButton" type="button" aria-label="打开设置">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 8.2a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6Z" />
+            <path
+              d="M19.4 13.5c.1-.5.1-1 .1-1.5s0-1-.1-1.5l2-1.5-2-3.5-2.4 1a8.7 8.7 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A8.7 8.7 0 0 0 7 6.5l-2.4-1-2 3.5 2 1.5c-.1.5-.1 1-.1 1.5s0 1 .1 1.5l-2 1.5 2 3.5 2.4-1a8.7 8.7 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a8.7 8.7 0 0 0 2.6-1.5l2.4 1 2-3.5-2-1.5Z"
+            />
+          </svg>
+        </button>
+      </header>
+
+      <section class="weather-bar" aria-label="今日天气">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8 2v3M16 2v3M4 9h16M6 4h12a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" />
+        </svg>
+        <span id="dateText">今天 7月6日 · 小雨 18°C</span>
+        <svg class="rain-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8 17l-1 3M13 17l-1 3M18 17l-1 3M7 16h11a4 4 0 0 0 .5-8A6 6 0 0 0 7 7.5 4.5 4.5 0 0 0 7 16Z" />
+        </svg>
+      </section>
+
+      <section class="mood-control" aria-label="今日状态">
+        <button type="button" data-mood="lazy">偷懒</button>
+        <button type="button" data-mood="normal">正常</button>
+        <button type="button" data-mood="treat">想吃好点</button>
+      </section>
+
+      <section class="top-panel" id="topRecommendation" aria-live="polite"></section>
+
+      <section class="cards-section">
+        <div class="section-heading">
+          <h2>今晚方案</h2>
+          <button class="text-button" id="refreshAllButton" type="button">全部换一批</button>
+        </div>
+        <div class="decision-list" id="decisionList"></div>
+      </section>
+    </main>
+
+    <aside class="sheet" id="recipeSheet" aria-hidden="true">
+      <div class="sheet-panel">
+        <button class="sheet-close" type="button" data-close="recipeSheet">关闭</button>
+        <div id="recipeContent"></div>
+      </div>
+    </aside>
+
+    <aside class="sheet" id="shoppingSheet" aria-hidden="true">
+      <div class="sheet-panel">
+        <button class="sheet-close" type="button" data-close="shoppingSheet">关闭</button>
+        <div id="shoppingContent"></div>
+      </div>
+    </aside>
+
+    <aside class="sheet" id="feedbackSheet" aria-hidden="true">
+      <div class="sheet-panel compact">
+        <button class="sheet-close" type="button" data-close="feedbackSheet">关闭</button>
+        <h2>这顿怎么样?</h2>
+        <div class="tag-grid" id="feedbackTags"></div>
+      </div>
+    </aside>
+
+    <aside class="sheet" id="settingsSheet" aria-hidden="true">
+      <div class="sheet-panel">
+        <button class="sheet-close" type="button" data-close="settingsSheet">关闭</button>
+        <h2>偏好设置</h2>
+        <form class="settings-form" id="settingsForm">
+          <label>
+            用餐人数
+            <select name="peopleCount">
+              <option value="1">1 人</option>
+              <option value="2">2 人</option>
+              <option value="3-4">3-4 人</option>
+              <option value="5+">5 人以上</option>
+            </select>
+          </label>
+          <label>
+            辣度
+            <select name="spicyLevel">
+              <option value="none">不吃辣</option>
+              <option value="mild">微辣</option>
+              <option value="medium">中辣</option>
+              <option value="hot">重辣</option>
+            </select>
+          </label>
+          <label>
+            每人预算
+            <select name="budgetPerPerson">
+              <option value="under_15">¥15 以下</option>
+              <option value="15_30">¥15-30</option>
+              <option value="30_60">¥30-60</option>
+              <option value="60_plus">¥60+</option>
+            </select>
+          </label>
+          <button class="primary-button" type="submit">保存设置</button>
+        </form>
+      </div>
+    </aside>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>

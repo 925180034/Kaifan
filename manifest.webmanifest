@@ -1,0 +1,9 @@
+{
+  "name": "晚餐决策助手",
+  "short_name": "开饭",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f7f5f0",
+  "theme_color": "#2f8f4e",
+  "description": "每天 30 秒决定今晚自己做、点外卖还是出去吃。"
+}
