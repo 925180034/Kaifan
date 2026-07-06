@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "test": "node --test",
+    "backend:test": "python3 -m unittest discover -s tests_backend",
     "serve": "python3 -m http.server 4173",
-    "check": "npm test"
+    "dev": "uvicorn server.main:app --host 0.0.0.0 --port 6053",
+    "check": "npm test && npm run backend:test"
   }
 }

@@ -11,6 +11,13 @@ import {
 } from "./decisionEngine.js";
 import { buildSearchUrl, formatKeywords } from "./platformLinks.js";
 import { loadState, saveState } from "./storage.js";
+import {
+  fetchTodayDecision,
+  refreshDecisionCard,
+  saveProfile,
+  selectDecisionCard,
+  submitFeedback
+} from "./apiClient.js";
 
 const stateKey = "kaifan.mvp.state";
 
@@ -23,12 +30,19 @@ const accentColors = {
 };
 
 const state = loadState(stateKey, {
+  userId: null,
+  decisionId: null,
   profile: defaultProfile,
   context: defaultDailyContext,
   cards: cloneCards(initialDecisionCards),
   selectedCardId: null,
-  feedback: []
+  feedback: [],
+  apiAvailable: false
 });
+
+if (!state.userId) {
+  state.userId = globalThis.crypto?.randomUUID?.() ?? `local-${Date.now()}`;
+}
 
 const elements = {
   profileSummary: document.querySelector("#profileSummary"),
@@ -62,6 +76,32 @@ function cloneCards(cards) {
 
 function persist() {
   saveState(stateKey, state);
+}
+
+function applyDecision(decision) {
+  state.decisionId = decision.decisionId;
+  state.profile = decision.profile ?? state.profile;
+  state.context = decision.context ?? state.context;
+  state.cards = cloneCards(decision.cards);
+  state.selectedCardId = decision.selectedCardId ?? null;
+  state.apiAvailable = true;
+}
+
+async function initializeFromBackend() {
+  try {
+    const decision = await fetchTodayDecision({
+      userId: state.userId,
+      profile: state.profile,
+      context: state.context
+    });
+    applyDecision(decision);
+    persist();
+    render();
+  } catch {
+    state.apiAvailable = false;
+    persist();
+    showToast("后端暂不可用,已使用本地方案");
+  }
 }
 
 function escapeHtml(value) {
@@ -172,6 +212,13 @@ function getCard(id) {
 function selectCard(card) {
   state.selectedCardId = card.id;
   persist();
+  if (state.decisionId) {
+    selectDecisionCard({
+      decisionId: state.decisionId,
+      userId: state.userId,
+      cardId: card.id
+    }).catch(() => showToast("选择已本地记录,后端稍后同步"));
+  }
 
   if (card.type === "cook") {
     openRecipe(card);
@@ -296,7 +343,25 @@ function showToast(message) {
   window.setTimeout(() => elements.toast.classList.remove("visible"), 1800);
 }
 
-function refreshOne(type, currentId) {
+async function refreshOne(type, currentId) {
+  if (state.decisionId) {
+    try {
+      const decision = await refreshDecisionCard({
+        decisionId: state.decisionId,
+        userId: state.userId,
+        type,
+        currentId,
+        mood: state.context.mood
+      });
+      applyDecision(decision);
+      persist();
+      render();
+      return;
+    } catch {
+      showToast("后端换菜失败,已用本地方案");
+    }
+  }
+
   const next = refreshCard(type, state.context.mood, currentId);
   state.cards = state.cards.map((card) => (card.id === currentId ? next : card));
   persist();
@@ -378,12 +443,21 @@ document.body.addEventListener("click", (event) => {
   }
   if (feedbackButton) showFeedback(feedbackButton.dataset.feedback);
   if (feedbackTag) {
-    state.feedback.push({
+    const feedback = {
       cardId: feedbackTag.dataset.cardId,
       tag: feedbackTag.dataset.feedbackTag,
       createdAt: new Date().toISOString()
-    });
+    };
+    state.feedback.push(feedback);
     persist();
+    if (state.decisionId) {
+      submitFeedback({
+        decisionId: state.decisionId,
+        userId: state.userId,
+        cardId: feedback.cardId,
+        tag: feedback.tag
+      }).catch(() => showToast("反馈已本地记录,后端稍后同步"));
+    }
     closeSheet("feedbackSheet");
     showToast("反馈已记录");
   }
@@ -398,9 +472,11 @@ elements.settingsForm.addEventListener("submit", (event) => {
   state.profile.spicyLevel = form.get("spicyLevel");
   state.profile.budgetPerPerson = form.get("budgetPerPerson");
   persist();
+  saveProfile(state.userId, state.profile).catch(() => showToast("设置已本地保存,后端稍后同步"));
   render();
   closeSheet("settingsSheet");
   showToast("设置已保存");
 });
 
 render();
+initializeFromBackend();

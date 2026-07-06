@@ -8,15 +8,19 @@ This repository contains a static H5/PWA MVP for the Dinner Decision Assistant p
 - `docs/晚餐决策助手-前端设计文档-v1.0.md`: H5/PWA frontend UX, pages, components, states, and interaction guidance.
 - `index.html`, `styles.css`, `manifest.webmanifest`: static app shell, styling, and PWA metadata.
 - `src/`: application modules, including decision logic, sample data, storage, links, and UI orchestration.
+- `server/`: FastAPI backend, SQLite persistence, and recommendation helpers.
 - `tests/`: Node.js tests for behavior-focused modules.
+- `tests_backend/`: Python `unittest` tests for backend persistence and recommendation behavior.
 - `assets/concepts/`: generated visual reference assets.
 
 ## Build, Test, and Development Commands
 
 - `npm test`: run Node.js built-in tests.
+- `npm run backend:test`: run Python backend tests.
+- `npm run dev`: start the FastAPI app and static frontend at `http://127.0.0.1:6053`.
 - `npm run serve`: serve the static app at `http://127.0.0.1:4173`.
 - `npm run check`: run the current verification suite.
-- `rg "TODO|TBD" docs src tests`: scan for placeholders before review.
+- `rg "TODO|TBD" docs src server tests tests_backend`: scan for placeholders before review.
 
 ## Coding Style & Naming Conventions
 
