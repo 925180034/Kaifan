@@ -51,8 +51,12 @@
       <section class="cards-section">
         <div class="section-heading">
           <h2>今晚方案</h2>
-          <button class="text-button" id="refreshAllButton" type="button">全部换一批</button>
+          <div class="section-actions">
+            <button class="text-button" id="regenerateButton" type="button">按画像生成</button>
+            <button class="text-button" id="refreshAllButton" type="button">全部换一批</button>
+          </div>
         </div>
+        <p class="generation-status" id="generationStatus" data-state="ready">当前为本地方案</p>
         <div class="decision-list" id="decisionList"></div>
       </section>
     </main>

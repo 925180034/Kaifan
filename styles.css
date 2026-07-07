@@ -209,6 +209,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   margin-bottom: 12px;
 }
 
@@ -222,6 +223,35 @@ button {
   background: transparent;
   color: var(--green);
   font-weight: 750;
+}
+
+.section-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.generation-status {
+  min-height: 22px;
+  margin: -4px 0 12px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.generation-status[data-state="loading"] {
+  color: var(--blue);
+}
+
+.generation-status[data-state="error"] {
+  color: var(--danger);
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.58;
 }
 
 .decision-list {
@@ -469,5 +499,13 @@ button {
   .card-visual {
     width: 62px;
     height: 62px;
+  }
+
+  .section-heading {
+    align-items: flex-start;
+  }
+
+  .section-actions {
+    max-width: 176px;
   }
 }

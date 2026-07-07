@@ -3,7 +3,12 @@ import {
   defaultProfile,
   initialDecisionCards
 } from "./sampleData.js";
-import { applyDecisionState } from "./appState.js";
+import {
+  applyDecisionState,
+  failDecisionRequest,
+  finishDecisionRequest,
+  startDecisionRequest
+} from "./appState.js";
 import {
   getMoodLabel,
   getTopRecommendation,
@@ -39,7 +44,11 @@ const state = loadState(stateKey, {
   cards: cloneCards(initialDecisionCards),
   selectedCardId: null,
   feedback: [],
-  apiAvailable: false
+  apiAvailable: false,
+  isGenerating: false,
+  generationError: "",
+  requestSequence: 0,
+  activeRequestId: 0
 });
 
 if (!state.userId) {
@@ -52,7 +61,9 @@ const elements = {
   moodButtons: [...document.querySelectorAll("[data-mood]")],
   topRecommendation: document.querySelector("#topRecommendation"),
   decisionList: document.querySelector("#decisionList"),
+  regenerateButton: document.querySelector("#regenerateButton"),
   refreshAllButton: document.querySelector("#refreshAllButton"),
+  generationStatus: document.querySelector("#generationStatus"),
   recipeSheet: document.querySelector("#recipeSheet"),
   recipeContent: document.querySelector("#recipeContent"),
   shoppingSheet: document.querySelector("#shoppingSheet"),
@@ -85,19 +96,33 @@ function applyDecision(decision) {
 }
 
 async function initializeFromBackend() {
+  regenerateDecision("initial");
+}
+
+async function regenerateDecision(reason = "manual") {
+  const requestId = startDecisionRequest(state);
+  persist();
+  render();
+
   try {
     const decision = await fetchTodayDecision({
       userId: state.userId,
       profile: state.profile,
       context: state.context
     });
-    applyDecision(decision);
+    const applied = finishDecisionRequest(state, requestId, decision, cloneCards);
+    if (!applied) return;
     persist();
     render();
+    if (reason !== "initial") {
+      showToast("已按你的画像重新生成");
+    }
   } catch {
-    state.apiAvailable = false;
+    const failed = failDecisionRequest(state, requestId, "生成失败,已保留上一版方案");
+    if (!failed) return;
     persist();
-    showToast("后端暂不可用,已使用本地方案");
+    render();
+    showToast("生成失败,已保留上一版方案");
   }
 }
 
@@ -115,6 +140,7 @@ function render() {
   renderMood();
   renderTopRecommendation();
   renderCards();
+  renderGenerationStatus();
   renderSettings();
 }
 
@@ -135,7 +161,7 @@ function renderTopRecommendation() {
       <span class="metric">${walletIcon()} <strong>${escapeHtml(top.costText)}</strong></span>
     </div>
     <p>${escapeHtml(top.reason)}</p>
-    <button class="primary-button" type="button" data-primary="${escapeHtml(top.id)}">别问了,就这个</button>
+    <button class="primary-button" type="button" data-primary="${escapeHtml(top.id)}" ${state.isGenerating ? "disabled" : ""}>别问了,就这个</button>
   `;
 }
 
@@ -161,12 +187,30 @@ function cardTemplate(card) {
         <p class="metric-row">${escapeHtml(card.timeText)} · ${escapeHtml(card.costText)}</p>
         <p>${escapeHtml(card.subtitle)}</p>
         <div class="card-actions">
-          <button class="card-button" type="button" data-action="${escapeHtml(card.primaryAction.action)}" data-card-id="${escapeHtml(card.id)}">${escapeHtml(card.primaryAction.label)}</button>
-          <button class="ghost-button" type="button" data-refresh="${escapeHtml(card.type)}" data-card-id="${escapeHtml(card.id)}">换这个</button>
+          <button class="card-button" type="button" data-action="${escapeHtml(card.primaryAction.action)}" data-card-id="${escapeHtml(card.id)}" ${state.isGenerating ? "disabled" : ""}>${escapeHtml(card.primaryAction.label)}</button>
+          <button class="ghost-button" type="button" data-refresh="${escapeHtml(card.type)}" data-card-id="${escapeHtml(card.id)}" ${state.isGenerating ? "disabled" : ""}>换这个</button>
         </div>
       </div>
     </article>
   `;
+}
+
+function renderGenerationStatus() {
+  elements.regenerateButton.disabled = state.isGenerating;
+  elements.refreshAllButton.disabled = state.isGenerating;
+  elements.generationStatus.textContent = generationStatusText();
+  elements.generationStatus.dataset.state = state.isGenerating
+    ? "loading"
+    : state.generationError
+      ? "error"
+      : "ready";
+}
+
+function generationStatusText() {
+  if (state.isGenerating) return "正在按你的画像生成...";
+  if (state.generationError) return state.generationError;
+  if (state.apiAvailable) return "已根据画像生成";
+  return "当前为本地方案";
 }
 
 function renderSettings() {
@@ -330,6 +374,8 @@ function showToast(message) {
 }
 
 async function refreshOne(type, currentId) {
+  if (state.isGenerating) return;
+
   if (state.decisionId) {
     try {
       const decision = await refreshDecisionCard({
@@ -355,6 +401,8 @@ async function refreshOne(type, currentId) {
 }
 
 function refreshAll() {
+  if (state.isGenerating) return;
+
   state.cards = state.cards.map((card) => refreshCard(card.type, state.context.mood, card.id));
   persist();
   render();
@@ -382,10 +430,11 @@ function walletIcon() {
 
 elements.moodButtons.forEach((button) => {
   button.addEventListener("click", () => {
+    if (button.dataset.mood === state.context.mood) return;
     state.context.mood = button.dataset.mood;
-    showToast(`已切换到${getMoodLabel(state.context.mood)}模式`);
     persist();
-    render();
+    showToast(`已切换到${getMoodLabel(state.context.mood)}模式,正在生成`);
+    regenerateDecision("mood");
   });
 });
 
@@ -394,12 +443,14 @@ elements.decisionList.addEventListener("click", (event) => {
   const refreshButton = event.target.closest("[data-refresh]");
 
   if (actionButton) {
+    if (state.isGenerating) return;
     const card = getCard(actionButton.dataset.cardId);
     selectCard(card);
     return;
   }
 
   if (refreshButton) {
+    if (state.isGenerating) return;
     refreshOne(refreshButton.dataset.refresh, refreshButton.dataset.cardId);
   }
 });
@@ -407,8 +458,11 @@ elements.decisionList.addEventListener("click", (event) => {
 elements.topRecommendation.addEventListener("click", (event) => {
   const button = event.target.closest("[data-primary]");
   if (!button) return;
+  if (state.isGenerating) return;
   selectCard(getCard(button.dataset.primary));
 });
+
+elements.regenerateButton.addEventListener("click", () => regenerateDecision("manual"));
 
 elements.refreshAllButton.addEventListener("click", refreshAll);
 
@@ -466,9 +520,9 @@ elements.settingsForm.addEventListener("submit", (event) => {
   state.profile.allergies = parseListInput(form.get("allergies"));
   persist();
   saveProfile(state.userId, state.profile).catch(() => showToast("设置已本地保存,后端稍后同步"));
-  render();
   closeSheet("settingsSheet");
-  showToast("设置已保存");
+  showToast("设置已保存,正在重新生成");
+  regenerateDecision("profile");
 });
 
 render();

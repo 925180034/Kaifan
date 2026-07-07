@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { applyDecisionState } from "../src/appState.js";
+import {
+  applyDecisionState,
+  failDecisionRequest,
+  finishDecisionRequest,
+  startDecisionRequest
+} from "../src/appState.js";
 
 test("applying a decision keeps locally edited profile fields", () => {
   const state = {
@@ -32,4 +37,67 @@ test("applying a decision keeps locally edited profile fields", () => {
   assert.deepEqual(state.context, { mood: "treat" });
   assert.equal(state.cards[0].id, "llm-cook");
   assert.equal(state.apiAvailable, true);
+});
+
+test("starting a decision request marks generation as active", () => {
+  const state = {
+    isGenerating: false,
+    generationError: "旧错误",
+    requestSequence: 0
+  };
+
+  const requestId = startDecisionRequest(state);
+
+  assert.equal(requestId, 1);
+  assert.equal(state.requestSequence, 1);
+  assert.equal(state.activeRequestId, 1);
+  assert.equal(state.isGenerating, true);
+  assert.equal(state.generationError, "");
+});
+
+test("stale decision responses do not replace newer cards", () => {
+  const state = {
+    cards: [{ id: "old-card" }],
+    profile: {},
+    context: {},
+    apiAvailable: false
+  };
+  const firstRequest = startDecisionRequest(state);
+  const secondRequest = startDecisionRequest(state);
+  const cloneCards = (cards) => cards.map((card) => ({ ...card }));
+
+  const staleApplied = finishDecisionRequest(
+    state,
+    firstRequest,
+    { decisionId: "first", cards: [{ id: "stale-card" }] },
+    cloneCards
+  );
+  const currentApplied = finishDecisionRequest(
+    state,
+    secondRequest,
+    { decisionId: "second", cards: [{ id: "fresh-card" }] },
+    cloneCards
+  );
+
+  assert.equal(staleApplied, false);
+  assert.equal(currentApplied, true);
+  assert.equal(state.decisionId, "second");
+  assert.equal(state.cards[0].id, "fresh-card");
+  assert.equal(state.isGenerating, false);
+});
+
+test("failed decision request keeps last good cards visible", () => {
+  const state = {
+    cards: [{ id: "last-good-card" }],
+    apiAvailable: true
+  };
+  const requestId = startDecisionRequest(state);
+
+  const failed = failDecisionRequest(state, requestId, "生成失败,已保留上一版");
+
+  assert.equal(failed, true);
+  assert.equal(state.cards[0].id, "last-good-card");
+  assert.equal(state.isGenerating, false);
+  assert.equal(state.apiAvailable, false);
+  assert.equal(state.generationError, "生成失败,已保留上一版");
 });
