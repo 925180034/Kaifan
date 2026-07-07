@@ -2,8 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  fetchMemory,
+  fetchProfile,
   fetchTodayDecision,
   refreshDecisionCard,
+  saveMemory,
   saveProfile,
   selectDecisionCard,
   submitFeedback
@@ -47,6 +50,33 @@ test("saveProfile posts to the user profile endpoint", async () => {
 
   assert.equal(calls[0].url, "/api/profile/user-1");
   assert.equal(JSON.parse(calls[0].options.body).profile.spicyLevel, "mild");
+});
+
+test("fetchProfile gets the user profile endpoint", async () => {
+  const { calls, fetchImpl } = createFetchRecorder({ profile: { spicyLevel: "hot" } });
+
+  const result = await fetchProfile("user-1", fetchImpl);
+
+  assert.equal(result.profile.spicyLevel, "hot");
+  assert.equal(calls[0].url, "/api/profile/user-1");
+  assert.equal(calls[0].options.method, "GET");
+});
+
+test("memory helpers call matching backend endpoints", async () => {
+  const memory = {
+    recentMeals: [{ id: "cook-1", title: "虾仁豆腐饭" }],
+    feedbackLearning: { likedKeywords: ["虾仁"] },
+    feedback: []
+  };
+  const { calls, fetchImpl } = createFetchRecorder({ memory });
+
+  await fetchMemory("user-1", fetchImpl);
+  await saveMemory("user-1", memory, fetchImpl);
+
+  assert.equal(calls[0].url, "/api/memory/user-1");
+  assert.equal(calls[0].options.method, "GET");
+  assert.equal(calls[1].url, "/api/memory/user-1");
+  assert.equal(JSON.parse(calls[1].options.body).memory.recentMeals[0].id, "cook-1");
 });
 
 test("decision mutations call their matching backend endpoints", async () => {

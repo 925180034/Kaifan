@@ -18,6 +18,10 @@ class ProfileRequest(BaseModel):
     profile: dict = Field(default_factory=dict)
 
 
+class MemoryRequest(BaseModel):
+    memory: dict = Field(default_factory=dict)
+
+
 class DecisionRequest(BaseModel):
     userId: str = "local-user"
     profile: dict = Field(default_factory=lambda: DEFAULT_PROFILE.copy())
@@ -62,6 +66,16 @@ def create_app(database=None):
         profile = request.profile or DEFAULT_PROFILE
         db.save_profile(user_id, profile)
         return {"userId": user_id, "profile": profile}
+
+    @app.get("/api/memory/{user_id}")
+    def get_memory(user_id: str):
+        return {"userId": user_id, "memory": db.get_memory(user_id) or default_memory()}
+
+    @app.post("/api/memory/{user_id}")
+    def save_memory(user_id: str, request: MemoryRequest):
+        memory = normalize_memory(request.memory)
+        db.save_memory(user_id, memory)
+        return {"userId": user_id, "memory": memory}
 
     @app.post("/api/decision/today")
     def today_decision(request: DecisionRequest):
@@ -115,3 +129,15 @@ def create_app(database=None):
 
 
 app = create_app()
+
+
+def default_memory():
+    return {"recentMeals": [], "feedbackLearning": None, "feedback": []}
+
+
+def normalize_memory(memory):
+    return {
+        "recentMeals": memory.get("recentMeals", []) if isinstance(memory, dict) else [],
+        "feedbackLearning": memory.get("feedbackLearning") if isinstance(memory, dict) else None,
+        "feedback": memory.get("feedback", []) if isinstance(memory, dict) else [],
+    }

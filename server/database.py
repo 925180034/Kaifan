@@ -34,6 +34,12 @@ class Database:
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS memories (
+                    user_id TEXT PRIMARY KEY,
+                    data_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS decisions (
                     id TEXT PRIMARY KEY,
                     user_id TEXT NOT NULL,
@@ -72,6 +78,28 @@ class Database:
         with self.connect() as connection:
             row = connection.execute(
                 "SELECT data_json FROM profiles WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+        return json.loads(row["data_json"]) if row else None
+
+    def save_memory(self, user_id, memory):
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO memories (user_id, data_json, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    data_json = excluded.data_json,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (user_id, json.dumps(memory, ensure_ascii=False)),
+            )
+        return memory
+
+    def get_memory(self, user_id):
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT data_json FROM memories WHERE user_id = ?",
                 (user_id,),
             ).fetchone()
         return json.loads(row["data_json"]) if row else None

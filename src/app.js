@@ -25,8 +25,11 @@ import {
 import { buildHistorySummary } from "./history.js";
 import { loadState, saveState } from "./storage.js";
 import {
+  fetchMemory,
+  fetchProfile,
   fetchTodayDecision,
   refreshDecisionCard,
+  saveMemory,
   saveProfile,
   selectDecisionCard,
   submitFeedback
@@ -60,7 +63,7 @@ const state = loadState(stateKey, {
 });
 
 if (!state.userId) {
-  state.userId = globalThis.crypto?.randomUUID?.() ?? `local-${Date.now()}`;
+  state.userId = "local-user";
 }
 
 const elements = {
@@ -107,7 +110,41 @@ function applyDecision(decision) {
 }
 
 async function initializeFromBackend() {
+  await hydrateUserState();
   regenerateDecision("initial");
+}
+
+async function hydrateUserState() {
+  await Promise.all([hydrateProfile(), hydrateMemory()]);
+  persist();
+  render();
+}
+
+async function hydrateProfile() {
+  try {
+    const response = await fetchProfile(state.userId);
+    state.profile = response.profile ?? state.profile;
+  } catch {
+    showToast("画像读取失败,已使用本地设置");
+  }
+}
+
+async function hydrateMemory() {
+  try {
+    const response = await fetchMemory(state.userId);
+    const memory = response.memory ?? {};
+    if (hasMemory(memory)) {
+      state.recentMeals = memory.recentMeals ?? [];
+      state.feedbackLearning = memory.feedbackLearning ?? null;
+      state.feedback = memory.feedback ?? [];
+      return;
+    }
+    if (hasMemory(state)) {
+      syncMemory();
+    }
+  } catch {
+    showToast("记录读取失败,已使用本地记录");
+  }
 }
 
 async function regenerateDecision(reason = "manual") {
@@ -135,6 +172,26 @@ async function regenerateDecision(reason = "manual") {
     render();
     showToast("生成失败,已保留上一版方案");
   }
+}
+
+function memorySnapshot() {
+  return {
+    recentMeals: state.recentMeals ?? [],
+    feedbackLearning: state.feedbackLearning ?? null,
+    feedback: state.feedback ?? []
+  };
+}
+
+function hasMemory(memory) {
+  return Boolean(
+    memory?.recentMeals?.length ||
+      memory?.feedback?.length ||
+      memory?.feedbackLearning
+  );
+}
+
+function syncMemory() {
+  saveMemory(state.userId, memorySnapshot()).catch(() => showToast("记录已本地保存,后端稍后同步"));
 }
 
 function escapeHtml(value) {
@@ -255,6 +312,7 @@ function selectCard(card) {
   state.selectedCardId = card.id;
   recordSelectedMeal(state, card);
   persist();
+  syncMemory();
   if (state.decisionId) {
     selectDecisionCard({
       decisionId: state.decisionId,
@@ -579,6 +637,7 @@ document.body.addEventListener("click", (event) => {
       recordFeedbackLearning(state, card, feedback.tag, feedback.createdAt);
     }
     persist();
+    syncMemory();
     if (state.decisionId) {
       submitFeedback({
         decisionId: state.decisionId,
