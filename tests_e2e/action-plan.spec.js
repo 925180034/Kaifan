@@ -41,7 +41,8 @@ test("opens a platform action plan from the dinner cards", async ({ page }) => {
   await page.goto("/");
 
   await expect(page).toHaveTitle(/晚餐决策助手/);
-  await expect(page.getByRole("heading", { name: "晚餐决策助手" })).toBeVisible();
+  await expect(page.locator(".date-weather")).toContainText("7月6日");
+  await expect(page.locator(".top-panel")).toContainText("今晚最推荐");
   await expect(page.locator(".decision-card")).toHaveCount(3);
   await expect(page.locator("#generationStatus")).toContainText("已根据画像生成");
 

@@ -41,9 +41,15 @@ const stateKey = "kaifan.mvp.state";
 const feedbackOptions = ["好吃,下次还吃", "太贵", "太麻烦", "没吃饱", "太油/太咸", "不合口味"];
 
 const accentColors = {
-  green: "#2f8f4e",
-  amber: "#d97706",
-  blue: "#1f6fa7"
+  green: "#3E7C4F",
+  amber: "#C97B1F",
+  blue: "#3D6B8E"
+};
+
+const tagBackgrounds = {
+  cook: "#E8F0EA",
+  takeout: "#F5EADA",
+  dine_out: "#E4EBF1"
 };
 
 const state = loadState(stateKey, {
@@ -207,11 +213,16 @@ function escapeHtml(value) {
 
 function render() {
   elements.profileSummary.textContent = buildProfileSummary(state.profile);
-  elements.dateText.textContent = state.context.dateText;
+  elements.dateText.textContent = formatTopDate(state.context.dateText);
   renderMood();
-  renderTopRecommendation();
-  renderCards();
+  if (state.isGenerating) {
+    renderLoadingState();
+  } else {
+    renderTopRecommendation();
+    renderCards();
+  }
   renderGenerationStatus();
+  renderRecentSummary();
   renderSettings();
 }
 
@@ -224,15 +235,16 @@ function renderMood() {
 
 function renderTopRecommendation() {
   const top = getTopRecommendation(state.cards, state.context);
+  const typeLabel = cardTypeLabel(top.type);
+  elements.topRecommendation.className = "top-panel";
   elements.topRecommendation.innerHTML = `
-    <div class="label">今晚最推荐</div>
-    <h2>${escapeHtml(top.title)}</h2>
-    <div class="metrics">
-      <span class="metric">${clockIcon()} ${escapeHtml(top.timeText)}</span>
-      <span class="metric">${walletIcon()} <strong>${escapeHtml(top.costText)}</strong></span>
+    <div class="hero-label">
+      ${clocheIcon()}
+      <span>今晚最推荐 · ${escapeHtml(typeLabel)}</span>
     </div>
-    <p>${escapeHtml(top.reason)}</p>
-    <button class="primary-button" type="button" data-primary="${escapeHtml(top.id)}" ${state.isGenerating ? "disabled" : ""}>别问了,就这个</button>
+    <div class="hero-title">${escapeHtml(top.title)}</div>
+    <p class="hero-reason">${escapeHtml(top.reason)}</p>
+    <button class="primary-button" type="button" data-primary="${escapeHtml(top.id)}">别问了，就这个</button>
   `;
 }
 
@@ -242,29 +254,103 @@ function renderCards() {
 }
 
 function cardTemplate(card) {
-  const typeLabel = {
-    cook: "自己做",
-    takeout: "点外卖",
-    dine_out: "出去吃"
-  }[card.type];
+  const typeLabel = cardTypeLabel(card.type);
   const accent = accentColors[card.accent] ?? accentColors.green;
+  const selected = state.selectedCardId === card.id;
+  const dimmed = state.selectedCardId && !selected;
+  const secondaryAction = card.type === "takeout" ? "copy-card-keywords" : "refresh";
+  const secondaryLabel = card.type === "takeout" ? "复制关键词" : "换这个";
 
   return `
-    <article class="decision-card" data-card-id="${escapeHtml(card.id)}" data-accent="${escapeHtml(card.accent)}" style="--card-accent:${accent}">
-      <div class="card-visual">${cardIcon(card.type)}</div>
-      <div class="card-main">
-        <h3>${typeLabel}</h3>
-        <p><strong>${escapeHtml(card.title)}</strong></p>
-        <p class="metric-row">${escapeHtml(card.timeText)} · ${escapeHtml(card.costText)}</p>
-        <p>${escapeHtml(card.subtitle)}</p>
+    <article class="decision-card ${dimmed ? "is-dimmed" : ""}" data-card-id="${escapeHtml(card.id)}" style="--card-accent:${accent}; --tag-bg:${tagBackgrounds[card.type] ?? tagBackgrounds.cook}; --card-border:${selected ? accent : "#EBE6DC"}">
+      <div class="card-head">
+        <span class="type-tag">${escapeHtml(typeLabel)}</span>
+        ${selected ? selectedTemplate(accent) : ""}
+      </div>
+      <div class="card-body">
+        <div class="card-title">${escapeHtml(card.title)}</div>
+        <div class="metric-pills">
+          ${cardPills(card).map((pill) => `<span class="metric-pill">${escapeHtml(pill)}</span>`).join("")}
+        </div>
+        <p class="card-reason">${escapeHtml(card.reason || card.subtitle || "")}</p>
         <div class="card-actions">
-          <button class="card-button" type="button" data-action="${escapeHtml(card.primaryAction.action)}" data-card-id="${escapeHtml(card.id)}" ${state.isGenerating ? "disabled" : ""}>${escapeHtml(card.primaryAction.label)}</button>
-          <button class="ghost-button" type="button" data-refresh="${escapeHtml(card.type)}" data-card-id="${escapeHtml(card.id)}" ${state.isGenerating ? "disabled" : ""}>换这个</button>
-          <button class="ghost-button" type="button" data-feedback="${escapeHtml(card.id)}" ${state.isGenerating ? "disabled" : ""}>反馈</button>
+          <button class="card-button" type="button" data-action="${escapeHtml(card.primaryAction.action)}" data-card-id="${escapeHtml(card.id)}">${escapeHtml(primaryLabel(card))}</button>
+          <button class="ghost-button" type="button" ${secondaryAction === "refresh" ? `data-refresh="${escapeHtml(card.type)}"` : `data-copy-card-keywords="${escapeHtml(card.id)}"`} data-card-id="${escapeHtml(card.id)}">${escapeHtml(secondaryLabel)}</button>
         </div>
       </div>
     </article>
   `;
+}
+
+function selectedTemplate(accent) {
+  return `
+    <span class="selected-tag" style="color:${accent}">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="m9 12 2 2 4-4"></path></svg>
+      已选择
+    </span>
+  `;
+}
+
+function renderLoadingState() {
+  elements.topRecommendation.className = "loading-block";
+  elements.topRecommendation.innerHTML = `
+    <div class="loading-stack">
+      <div class="loading-text">正在想今晚吃什么...</div>
+      <div class="skeleton" style="height:216px"></div>
+    </div>
+  `;
+  elements.decisionList.innerHTML = [0, 1, 2]
+    .map((index) => `<div class="skeleton" style="height:160px; animation-delay:${index * 0.15}s"></div>`)
+    .join("");
+}
+
+function renderRecentSummary() {
+  const names = (state.recentMeals ?? []).map((meal) => meal.title).filter(Boolean).slice(0, 2);
+  elements.historyButton.textContent = names.length
+    ? `最近吃过：${names.join(" · ")}`
+    : "最近吃过：还没有记录";
+}
+
+function cardTypeLabel(type) {
+  return {
+    cook: "自己做",
+    takeout: "点外卖",
+    dine_out: "出去吃"
+  }[type] ?? "今晚方案";
+}
+
+function primaryLabel(card) {
+  return {
+    cook: "看菜谱",
+    takeout: "去美团搜",
+    dine_out: "去点评搜"
+  }[card.type] ?? card.primaryAction?.label ?? "查看";
+}
+
+function cardPills(card) {
+  return [
+    card.timeText,
+    card.costText,
+    card.type === "cook" ? difficultyLabel(card.difficulty) : ""
+  ].filter(Boolean);
+}
+
+function difficultyLabel(value) {
+  return {
+    easy: "简单",
+    normal: "普通",
+    hard: "复杂",
+    rich: "复杂"
+  }[value] ?? value;
+}
+
+function formatTopDate(value) {
+  const text = String(value ?? "").replace(/^今天\s*/, "");
+  const parts = text.split(" · ");
+  if (parts.length >= 2 && !parts[0].includes("周")) {
+    return `${parts[0]} 周一 · ${parts.slice(1).join(" · ")}`;
+  }
+  return text || "7月6日 周一 · 小雨 18°C";
 }
 
 function renderGenerationStatus() {
@@ -316,6 +402,7 @@ function selectCard(card) {
   recordSelectedMeal(state, card);
   persist();
   syncMemory();
+  render();
   if (state.decisionId) {
     selectDecisionCard({
       decisionId: state.decisionId,
@@ -335,7 +422,7 @@ function selectCard(card) {
 function openRecipe(card) {
   elements.recipeContent.innerHTML = `
     <h2 class="recipe-title">${escapeHtml(card.title)}</h2>
-    <p>${escapeHtml(card.reason)}</p>
+    <p class="recipe-lead">${escapeHtml(card.reason)}</p>
     <div class="summary-grid">
       <div class="summary-item"><strong>${escapeHtml(card.timeText)}</strong><br />预计耗时</div>
       <div class="summary-item"><strong>${escapeHtml(card.costText)}</strong><br />预计成本</div>
@@ -578,24 +665,15 @@ function refreshAll() {
   render();
 }
 
-function cardIcon(type) {
-  if (type === "takeout") {
-    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8h12l-1 12H7L6 8Z"/><path d="M9 8a3 3 0 0 1 6 0"/><path d="M4 13h16"/></svg>`;
-  }
-
-  if (type === "dine_out") {
-    return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10h16"/><path d="M6 10v10h12V10"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><path d="M9 20v-5h6v5"/></svg>`;
-  }
-
-  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 10h14l-1 8a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3l-1-8Z"/><path d="M3 10h18"/><path d="M9 6c0-2 2-2 2-4"/><path d="M14 6c0-2 2-2 2-4"/></svg>`;
-}
-
-function clockIcon() {
-  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="9"/></svg>`;
-}
-
-function walletIcon() {
-  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h15a2 2 0 0 1 2 2v9H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h12"/><path d="M17 13h.01"/></svg>`;
+function clocheIcon() {
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M2 12h20"></path>
+      <path d="M20 12v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8"></path>
+      <path d="m4 8 16-4"></path>
+      <path d="m8.86 6.78-.45-1.81a2 2 0 0 1 1.45-2.43l1.94-.48a2 2 0 0 1 2.43 1.46l.45 1.8"></path>
+    </svg>
+  `;
 }
 
 elements.moodButtons.forEach((button) => {
@@ -611,6 +689,7 @@ elements.moodButtons.forEach((button) => {
 elements.decisionList.addEventListener("click", (event) => {
   const actionButton = event.target.closest("[data-action]");
   const refreshButton = event.target.closest("[data-refresh]");
+  const copyCardButton = event.target.closest("[data-copy-card-keywords]");
 
   if (actionButton) {
     if (state.isGenerating) return;
@@ -622,6 +701,14 @@ elements.decisionList.addEventListener("click", (event) => {
   if (refreshButton) {
     if (state.isGenerating) return;
     refreshOne(refreshButton.dataset.refresh, refreshButton.dataset.cardId);
+    return;
+  }
+
+  if (copyCardButton) {
+    const card = getCard(copyCardButton.dataset.copyCardKeywords);
+    const plan = buildActionPlan(card, state.profile);
+    copyText(plan.searchText);
+    showToast("关键词已复制");
   }
 });
 
