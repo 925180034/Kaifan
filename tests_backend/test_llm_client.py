@@ -1,6 +1,6 @@
 import unittest
 
-from server.llm_client import DeepSeekClient
+from server.llm_client import DeepSeekClient, system_prompt
 from server.recommender import build_decision
 from server.sample_data import DEFAULT_CONTEXT, DEFAULT_PROFILE
 
@@ -120,6 +120,13 @@ class DeepSeekClientTests(unittest.TestCase):
 
         self.assertEqual(len(decision["cards"]), 3)
         self.assertIn("topRecommendation", decision)
+
+    def test_system_prompt_guides_recent_meals_and_feedback_learning(self):
+        prompt = system_prompt()
+
+        self.assertIn("recentMeals", prompt)
+        self.assertIn("feedbackLearning", prompt)
+        self.assertIn("避免重复", prompt)
 
 
 if __name__ == "__main__":

@@ -106,6 +106,9 @@ cook 卡还必须包含 difficulty, complexity, nutritionSummary, ingredients, s
 accent 只能是 green、amber、blue。
 primaryAction 必须包含 label 和 action。
 不要推荐违反忌口或过敏的食材。
+今日情境 JSON 可能包含 recentMeals, 代表用户最近选择过的晚餐; 应避免重复相同或高度相似的菜名、食材关键词和外卖/到店类型。
+今日情境 JSON 可能包含 feedbackLearning, 其中 likedKeywords 可适度靠近, avoidedKeywords 和 constraints 应明显减少或规避。
+如果 recentMeals 与 likedKeywords 冲突, 优先保持新鲜感, 用相近但不同的食材或做法替代。
 """.strip()
 
 

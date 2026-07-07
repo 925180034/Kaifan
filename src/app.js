@@ -17,6 +17,11 @@ import {
 } from "./decisionEngine.js";
 import { buildSearchUrl, formatKeywords } from "./platformLinks.js";
 import { buildProfileSummary, formatListInput, parseListInput } from "./profile.js";
+import {
+  buildGenerationContext,
+  recordFeedbackLearning,
+  recordSelectedMeal
+} from "./learning.js";
 import { loadState, saveState } from "./storage.js";
 import {
   fetchTodayDecision,
@@ -44,6 +49,8 @@ const state = loadState(stateKey, {
   cards: cloneCards(initialDecisionCards),
   selectedCardId: null,
   feedback: [],
+  recentMeals: [],
+  feedbackLearning: null,
   apiAvailable: false,
   isGenerating: false,
   generationError: "",
@@ -108,7 +115,7 @@ async function regenerateDecision(reason = "manual") {
     const decision = await fetchTodayDecision({
       userId: state.userId,
       profile: state.profile,
-      context: state.context
+      context: buildGenerationContext(state.context, state)
     });
     const applied = finishDecisionRequest(state, requestId, decision, cloneCards);
     if (!applied) return;
@@ -189,6 +196,7 @@ function cardTemplate(card) {
         <div class="card-actions">
           <button class="card-button" type="button" data-action="${escapeHtml(card.primaryAction.action)}" data-card-id="${escapeHtml(card.id)}" ${state.isGenerating ? "disabled" : ""}>${escapeHtml(card.primaryAction.label)}</button>
           <button class="ghost-button" type="button" data-refresh="${escapeHtml(card.type)}" data-card-id="${escapeHtml(card.id)}" ${state.isGenerating ? "disabled" : ""}>换这个</button>
+          <button class="ghost-button" type="button" data-feedback="${escapeHtml(card.id)}" ${state.isGenerating ? "disabled" : ""}>反馈</button>
         </div>
       </div>
     </article>
@@ -241,6 +249,7 @@ function getCard(id) {
 
 function selectCard(card) {
   state.selectedCardId = card.id;
+  recordSelectedMeal(state, card);
   persist();
   if (state.decisionId) {
     selectDecisionCard({
@@ -483,12 +492,16 @@ document.body.addEventListener("click", (event) => {
   }
   if (feedbackButton) showFeedback(feedbackButton.dataset.feedback);
   if (feedbackTag) {
+    const card = getCard(feedbackTag.dataset.cardId);
     const feedback = {
       cardId: feedbackTag.dataset.cardId,
       tag: feedbackTag.dataset.feedbackTag,
       createdAt: new Date().toISOString()
     };
     state.feedback.push(feedback);
+    if (card) {
+      recordFeedbackLearning(state, card, feedback.tag, feedback.createdAt);
+    }
     persist();
     if (state.decisionId) {
       submitFeedback({
@@ -499,7 +512,8 @@ document.body.addEventListener("click", (event) => {
       }).catch(() => showToast("反馈已本地记录,后端稍后同步"));
     }
     closeSheet("feedbackSheet");
-    showToast("反馈已记录");
+    showToast("反馈已记录,正在更新推荐");
+    regenerateDecision("feedback");
   }
 });
 
