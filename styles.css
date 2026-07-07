@@ -512,6 +512,73 @@ button:disabled {
   color: var(--muted);
 }
 
+.keyword-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 16px;
+}
+
+.keyword-row span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: var(--blue-soft);
+  color: var(--blue);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.platform-action-list {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.platform-action {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.platform-action strong {
+  color: var(--green);
+  font-size: 17px;
+}
+
+.platform-action span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.action-checklist {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.action-checklist li {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.full-width {
+  width: 100%;
+}
+
 .empty-state {
   padding: 14px;
   color: var(--muted);

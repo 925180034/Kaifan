@@ -15,7 +15,7 @@ import {
   rankDecisionCards,
   refreshCard
 } from "./decisionEngine.js";
-import { buildSearchUrl, formatKeywords } from "./platformLinks.js";
+import { buildSearchUrl } from "./platformLinks.js";
 import { buildProfileSummary, formatListInput, parseListInput } from "./profile.js";
 import {
   buildGenerationContext,
@@ -24,6 +24,7 @@ import {
 } from "./learning.js";
 import { buildHistorySummary } from "./history.js";
 import { loadState, saveState } from "./storage.js";
+import { buildActionPlan, platformLabel } from "./actionPlan.js";
 import {
   fetchMemory,
   fetchProfile,
@@ -79,6 +80,8 @@ const elements = {
   recipeContent: document.querySelector("#recipeContent"),
   shoppingSheet: document.querySelector("#shoppingSheet"),
   shoppingContent: document.querySelector("#shoppingContent"),
+  actionSheet: document.querySelector("#actionSheet"),
+  actionContent: document.querySelector("#actionContent"),
   feedbackSheet: document.querySelector("#feedbackSheet"),
   feedbackTags: document.querySelector("#feedbackTags"),
   historyButton: document.querySelector("#historyButton"),
@@ -397,11 +400,37 @@ function openShoppingList(card) {
 }
 
 function openPlatform(card) {
-  const platform = card.type === "takeout" ? "meituan" : "dianping";
-  const url = buildSearchUrl(platform, card.searchKeywords);
-  copyText(formatKeywords(card.searchKeywords));
-  window.open(url, "_blank", "noopener,noreferrer");
-  showToast("关键词已复制,正在打开搜索");
+  openActionPlan(card);
+  showToast("已准备好平台入口和关键词");
+}
+
+function openActionPlan(card) {
+  const plan = buildActionPlan(card, state.profile);
+  elements.actionContent.innerHTML = `
+    <h2 class="sheet-title">${escapeHtml(plan.title)}</h2>
+    <p>${escapeHtml(plan.summary)}</p>
+    <div class="keyword-row" aria-label="搜索关键词">
+      ${plan.keywordChips.map((keyword) => `<span>${escapeHtml(keyword)}</span>`).join("")}
+    </div>
+    <div class="platform-action-list">
+      ${plan.actions
+        .map(
+          (action) => `
+            <a class="platform-action" href="${escapeHtml(action.url)}" target="_blank" rel="noopener noreferrer">
+              <strong>${escapeHtml(action.label)}</strong>
+              <span>${escapeHtml(platformLabel(action.platform))} · ${escapeHtml(action.helper)}</span>
+            </a>
+          `
+        )
+        .join("")}
+    </div>
+    <button class="ghost-button full-width" type="button" data-copy-keywords="${escapeHtml(card.id)}">复制搜索词</button>
+    <h3>下单前看一眼</h3>
+    <ul class="action-checklist">
+      ${plan.checklist.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+    </ul>
+  `;
+  openSheet("actionSheet");
 }
 
 function copyShoppingList(card) {
@@ -616,6 +645,7 @@ document.body.addEventListener("click", (event) => {
   const groceryButton = event.target.closest("[data-grocery]");
   const feedbackButton = event.target.closest("[data-feedback]");
   const feedbackTag = event.target.closest("[data-feedback-tag]");
+  const copyKeywordsButton = event.target.closest("[data-copy-keywords]");
 
   if (closeButton) closeSheet(closeButton.dataset.close);
   if (shoppingButton) openShoppingList(getCard(shoppingButton.dataset.shopping));
@@ -623,6 +653,12 @@ document.body.addEventListener("click", (event) => {
   if (groceryButton) {
     const card = getCard(groceryButton.dataset.grocery);
     window.open(buildSearchUrl("xiaoxiang", card.searchKeywords), "_blank", "noopener,noreferrer");
+  }
+  if (copyKeywordsButton) {
+    const card = getCard(copyKeywordsButton.dataset.copyKeywords);
+    const plan = buildActionPlan(card, state.profile);
+    copyText(plan.searchText);
+    showToast("搜索词已复制");
   }
   if (feedbackButton) showFeedback(feedbackButton.dataset.feedback);
   if (feedbackTag) {

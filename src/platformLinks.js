@@ -23,5 +23,5 @@ export function buildSearchUrl(platform, keywords) {
     return `https://www.dianping.com/search/keyword/1/0_${encoded}`;
   }
 
-  return `https://www.google.com/search?q=${encoded}`;
+  return `https://www.baidu.com/s?wd=${encoded}`;
 }

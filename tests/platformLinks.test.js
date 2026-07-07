@@ -16,5 +16,5 @@ test("builds a Meituan search URL with encoded keywords", () => {
 test("builds a Xiaoxiang fallback search URL with encoded ingredient keywords", () => {
   const url = buildSearchUrl("xiaoxiang", ["番茄", "虾仁"]);
 
-  assert.equal(url, `https://www.google.com/search?q=${encodeURIComponent("小象超市 番茄 虾仁")}`);
+  assert.equal(url, `https://www.baidu.com/s?wd=${encodeURIComponent("小象超市 番茄 虾仁")}`);
 });
