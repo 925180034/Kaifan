@@ -20,14 +20,24 @@
           <h1>晚餐决策助手</h1>
           <p id="profileSummary">2 人 · 微辣 · ¥30-60/人</p>
         </div>
-        <button class="icon-button" id="settingsButton" type="button" aria-label="打开设置">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 8.2a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6Z" />
-            <path
-              d="M19.4 13.5c.1-.5.1-1 .1-1.5s0-1-.1-1.5l2-1.5-2-3.5-2.4 1a8.7 8.7 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A8.7 8.7 0 0 0 7 6.5l-2.4-1-2 3.5 2 1.5c-.1.5-.1 1-.1 1.5s0 1 .1 1.5l-2 1.5 2 3.5 2.4-1a8.7 8.7 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a8.7 8.7 0 0 0 2.6-1.5l2.4 1 2-3.5-2-1.5Z"
-            />
-          </svg>
-        </button>
+        <div class="header-actions">
+          <button class="icon-button" id="historyButton" type="button" aria-label="打开记录">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 5h16" />
+              <path d="M4 12h16" />
+              <path d="M4 19h10" />
+              <path d="M18 17v4l3-2" />
+            </svg>
+          </button>
+          <button class="icon-button" id="settingsButton" type="button" aria-label="打开设置">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 8.2a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6Z" />
+              <path
+                d="M19.4 13.5c.1-.5.1-1 .1-1.5s0-1-.1-1.5l2-1.5-2-3.5-2.4 1a8.7 8.7 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A8.7 8.7 0 0 0 7 6.5l-2.4-1-2 3.5 2 1.5c-.1.5-.1 1-.1 1.5s0 1 .1 1.5l-2 1.5 2 3.5 2.4-1a8.7 8.7 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a8.7 8.7 0 0 0 2.6-1.5l2.4 1 2-3.5-2-1.5Z"
+              />
+            </svg>
+          </button>
+        </div>
       </header>
 
       <section class="weather-bar" aria-label="今日天气">
@@ -80,6 +90,13 @@
         <button class="sheet-close" type="button" data-close="feedbackSheet">关闭</button>
         <h2>这顿怎么样?</h2>
         <div class="tag-grid" id="feedbackTags"></div>
+      </div>
+    </aside>
+
+    <aside class="sheet" id="historySheet" aria-hidden="true">
+      <div class="sheet-panel">
+        <button class="sheet-close" type="button" data-close="historySheet">关闭</button>
+        <div id="historyContent"></div>
       </div>
     </aside>
 

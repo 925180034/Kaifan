@@ -22,6 +22,7 @@ import {
   recordFeedbackLearning,
   recordSelectedMeal
 } from "./learning.js";
+import { buildHistorySummary } from "./history.js";
 import { loadState, saveState } from "./storage.js";
 import {
   fetchTodayDecision,
@@ -77,6 +78,9 @@ const elements = {
   shoppingContent: document.querySelector("#shoppingContent"),
   feedbackSheet: document.querySelector("#feedbackSheet"),
   feedbackTags: document.querySelector("#feedbackTags"),
+  historyButton: document.querySelector("#historyButton"),
+  historySheet: document.querySelector("#historySheet"),
+  historyContent: document.querySelector("#historyContent"),
   settingsButton: document.querySelector("#settingsButton"),
   settingsSheet: document.querySelector("#settingsSheet"),
   settingsForm: document.querySelector("#settingsForm"),
@@ -376,6 +380,76 @@ function showFeedback(cardId) {
   openSheet("feedbackSheet");
 }
 
+function openHistory() {
+  elements.historyContent.innerHTML = historyTemplate(buildHistorySummary(state));
+  openSheet("historySheet");
+}
+
+function historyTemplate(summary) {
+  if (!summary.hasHistory) {
+    return `
+      <h2 class="sheet-title">晚餐记录</h2>
+      <p class="empty-state">还没有记录。选一次晚餐或点一次反馈后,这里会开始记住你的偏好。</p>
+    `;
+  }
+
+  return `
+    <h2 class="sheet-title">晚餐记录</h2>
+    <div class="history-stats">
+      <div><strong>${summary.recentMeals.length}</strong><span>最近选择</span></div>
+      <div><strong>${summary.feedbackCount}</strong><span>反馈次数</span></div>
+      <div><strong>${summary.positiveFeedbackCount}</strong><span>喜欢</span></div>
+      <div><strong>${summary.negativeFeedbackCount}</strong><span>避雷</span></div>
+    </div>
+    <h3>最近吃过</h3>
+    ${historyMealList(summary.recentMeals)}
+    <h3>偏好学习</h3>
+    ${historyChipSection("喜欢", summary.likedKeywords)}
+    ${historyChipSection("少推荐", summary.avoidedKeywords)}
+    ${historyChipSection("约束", summary.constraints)}
+  `;
+}
+
+function historyMealList(meals) {
+  if (!meals.length) return `<p class="empty-state compact">还没有选择记录。</p>`;
+
+  return `
+    <div class="history-list">
+      ${meals
+        .map(
+          (meal) => `
+            <article class="history-item">
+              <div>
+                <strong>${escapeHtml(meal.title)}</strong>
+                <span>${escapeHtml(meal.typeLabel)} · ${escapeHtml(formatHistoryTime(meal.selectedAt))}</span>
+              </div>
+              <small>${escapeHtml((meal.searchKeywords ?? []).slice(0, 3).join(" / "))}</small>
+            </article>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function historyChipSection(label, values) {
+  if (!values.length) return "";
+
+  return `
+    <div class="history-chip-row" aria-label="${escapeHtml(label)}">
+      <span>${escapeHtml(label)}</span>
+      ${values.map((value) => `<b>${escapeHtml(value)}</b>`).join("")}
+    </div>
+  `;
+}
+
+function formatHistoryTime(value) {
+  if (!value) return "刚刚";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "刚刚";
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
 function showToast(message) {
   elements.toast.textContent = message;
   elements.toast.classList.add("visible");
@@ -474,6 +548,8 @@ elements.topRecommendation.addEventListener("click", (event) => {
 elements.regenerateButton.addEventListener("click", () => regenerateDecision("manual"));
 
 elements.refreshAllButton.addEventListener("click", refreshAll);
+
+elements.historyButton.addEventListener("click", openHistory);
 
 document.body.addEventListener("click", (event) => {
   const closeButton = event.target.closest("[data-close]");
