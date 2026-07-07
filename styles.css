@@ -32,7 +32,9 @@ body {
 }
 
 button,
-select {
+select,
+input,
+textarea {
   font: inherit;
 }
 
@@ -404,13 +406,22 @@ button {
   font-weight: 700;
 }
 
-.settings-form select {
+.settings-form select,
+.settings-form input,
+.settings-form textarea {
   min-height: 46px;
   padding: 0 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
   color: var(--text);
+}
+
+.settings-form textarea {
+  min-height: 64px;
+  padding: 10px 12px;
+  line-height: 1.45;
+  resize: vertical;
 }
 
 .toast {

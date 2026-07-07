@@ -46,3 +46,5 @@ Pull requests should include:
 ## Security & Configuration Tips
 
 Do not commit API keys, model tokens, platform cookies, private location data, or user health data. Keep third-party platform integrations limited to documented links or user-controlled search flows unless a compliant API is available.
+
+For DeepSeek integration, put local credentials in `.env.local` using `.env.example` as the template. The app reads `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL`, and `DEEPSEEK_BASE_URL`; keep `.env.local` untracked.

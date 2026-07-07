@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .database import Database
+from .llm_client import DeepSeekClient
 from .recommender import build_decision, refresh_card
 from .sample_data import DEFAULT_CONTEXT, DEFAULT_PROFILE
 
@@ -45,6 +46,7 @@ class FeedbackRequest(BaseModel):
 
 def create_app(database=None):
     db = database or Database()
+    llm_client = DeepSeekClient.from_env()
     app = FastAPI(title="Kaifan Dinner Decision Assistant")
 
     @app.get("/api/health")
@@ -66,7 +68,7 @@ def create_app(database=None):
         profile = request.profile or db.get_profile(request.userId) or DEFAULT_PROFILE
         context = request.context or DEFAULT_CONTEXT
         db.save_profile(request.userId, profile)
-        decision = build_decision(profile, context)
+        decision = build_decision(profile, context, llm_client=llm_client)
         return db.save_decision(request.userId, decision)
 
     @app.post("/api/decision/{decision_id}/refresh")

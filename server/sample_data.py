@@ -3,10 +3,12 @@ DEFAULT_PROFILE = {
     "allergies": [],
     "dislikes": ["香菜", "内脏"],
     "spicyLevel": "mild",
+    "tasteTags": ["清淡", "微辣", "少油"],
     "budgetPerPerson": "30_60",
     "cookingWillingness": "normal",
     "cuisinePreferences": ["家常", "川湘", "江浙"],
     "favoriteIngredients": ["虾仁", "豆腐", "番茄"],
+    "nutritionGoal": "高蛋白控油",
 }
 
 DEFAULT_CONTEXT = {

@@ -64,8 +64,8 @@ def refresh_card(card_type, mood="normal", current_id=None):
     return deepcopy((preferred or [option for option in pool if option["id"] != current_id] or pool)[0])
 
 
-def build_decision(profile, context, cards=None):
-    selected_cards = deepcopy(cards or INITIAL_DECISION_CARDS)
+def build_decision(profile, context, cards=None, llm_client=None):
+    selected_cards = maybe_generate_llm_cards(profile, context, cards, llm_client)
     ranked = rank_cards(selected_cards, context)
     return {
         "decisionId": str(uuid4()),
@@ -74,3 +74,14 @@ def build_decision(profile, context, cards=None):
         "cards": selected_cards,
         "topRecommendation": ranked[0],
     }
+
+
+def maybe_generate_llm_cards(profile, context, cards=None, llm_client=None):
+    if cards is not None:
+        return deepcopy(cards)
+    if llm_client and llm_client.is_configured():
+        try:
+            return deepcopy(llm_client.generate_cards(profile, context))
+        except Exception:
+            return deepcopy(INITIAL_DECISION_CARDS)
+    return deepcopy(INITIAL_DECISION_CARDS)

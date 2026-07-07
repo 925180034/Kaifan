@@ -3,6 +3,7 @@ import {
   defaultProfile,
   initialDecisionCards
 } from "./sampleData.js";
+import { applyDecisionState } from "./appState.js";
 import {
   getMoodLabel,
   getTopRecommendation,
@@ -10,6 +11,7 @@ import {
   refreshCard
 } from "./decisionEngine.js";
 import { buildSearchUrl, formatKeywords } from "./platformLinks.js";
+import { buildProfileSummary, formatListInput, parseListInput } from "./profile.js";
 import { loadState, saveState } from "./storage.js";
 import {
   fetchTodayDecision,
@@ -79,12 +81,7 @@ function persist() {
 }
 
 function applyDecision(decision) {
-  state.decisionId = decision.decisionId;
-  state.profile = decision.profile ?? state.profile;
-  state.context = decision.context ?? state.context;
-  state.cards = cloneCards(decision.cards);
-  state.selectedCardId = decision.selectedCardId ?? null;
-  state.apiAvailable = true;
+  applyDecisionState(state, decision, cloneCards);
 }
 
 async function initializeFromBackend() {
@@ -113,30 +110,12 @@ function escapeHtml(value) {
 }
 
 function render() {
-  elements.profileSummary.textContent = profileSummaryText();
+  elements.profileSummary.textContent = buildProfileSummary(state.profile);
   elements.dateText.textContent = state.context.dateText;
   renderMood();
   renderTopRecommendation();
   renderCards();
   renderSettings();
-}
-
-function profileSummaryText() {
-  const spicyText = {
-    none: "不吃辣",
-    mild: "微辣",
-    medium: "中辣",
-    hot: "重辣"
-  }[state.profile.spicyLevel];
-
-  const budgetText = {
-    under_15: "¥15以下/人",
-    "15_30": "¥15-30/人",
-    "30_60": "¥30-60/人",
-    "60_plus": "¥60+/人"
-  }[state.profile.budgetPerPerson];
-
-  return `${state.profile.peopleCount} 人 · ${spicyText} · ${budgetText}`;
 }
 
 function renderMood() {
@@ -195,6 +174,13 @@ function renderSettings() {
   form.peopleCount.value = state.profile.peopleCount;
   form.spicyLevel.value = state.profile.spicyLevel;
   form.budgetPerPerson.value = state.profile.budgetPerPerson;
+  form.cookingWillingness.value = state.profile.cookingWillingness ?? "normal";
+  form.nutritionGoal.value = state.profile.nutritionGoal ?? "";
+  form.tasteTags.value = formatListInput(state.profile.tasteTags);
+  form.cuisinePreferences.value = formatListInput(state.profile.cuisinePreferences);
+  form.favoriteIngredients.value = formatListInput(state.profile.favoriteIngredients);
+  form.dislikes.value = formatListInput(state.profile.dislikes);
+  form.allergies.value = formatListInput(state.profile.allergies);
 }
 
 function openSheet(id) {
@@ -471,6 +457,13 @@ elements.settingsForm.addEventListener("submit", (event) => {
   state.profile.peopleCount = form.get("peopleCount");
   state.profile.spicyLevel = form.get("spicyLevel");
   state.profile.budgetPerPerson = form.get("budgetPerPerson");
+  state.profile.cookingWillingness = form.get("cookingWillingness");
+  state.profile.nutritionGoal = String(form.get("nutritionGoal") ?? "").trim();
+  state.profile.tasteTags = parseListInput(form.get("tasteTags"));
+  state.profile.cuisinePreferences = parseListInput(form.get("cuisinePreferences"));
+  state.profile.favoriteIngredients = parseListInput(form.get("favoriteIngredients"));
+  state.profile.dislikes = parseListInput(form.get("dislikes"));
+  state.profile.allergies = parseListInput(form.get("allergies"));
   persist();
   saveProfile(state.userId, state.profile).catch(() => showToast("设置已本地保存,后端稍后同步"));
   render();
