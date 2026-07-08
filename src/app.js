@@ -123,6 +123,8 @@ const state = loadState(stateKey, {
   recentMeals: [],
   feedbackLearning: null,
   apiAvailable: false,
+  generationSource: "",
+  fallbackReason: "",
   isGenerating: false,
   generationError: "",
   requestSequence: 0,
@@ -142,6 +144,8 @@ state.clearDataArmed ??= false;
 state.checkedIngredients ??= {};
 state.doneSteps ??= {};
 state.selectedRecipeId ??= null;
+state.generationSource ??= "";
+state.fallbackReason ??= "";
 
 const elements = {
   todayScreen: document.querySelector("#todayScreen"),
@@ -654,6 +658,8 @@ function renderGenerationStatus() {
 function generationStatusText() {
   if (state.isGenerating) return "正在按你的画像生成...";
   if (state.generationError) return state.generationError;
+  if (state.generationSource === "llm") return "AI 已根据画像生成";
+  if (state.generationSource === "fallback") return "当前为本地兜底方案";
   if (state.apiAvailable) return "已根据画像生成";
   return "当前为本地方案";
 }

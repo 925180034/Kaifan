@@ -65,23 +65,37 @@ def refresh_card(card_type, mood="normal", current_id=None):
 
 
 def build_decision(profile, context, cards=None, llm_client=None):
-    selected_cards = maybe_generate_llm_cards(profile, context, cards, llm_client)
+    selected_cards, generation_source, fallback_reason = resolve_decision_cards(
+        profile,
+        context,
+        cards,
+        llm_client,
+    )
     ranked = rank_cards(selected_cards, context)
-    return {
+    decision = {
         "decisionId": str(uuid4()),
         "profile": deepcopy(profile),
         "context": deepcopy(context),
         "cards": selected_cards,
         "topRecommendation": ranked[0],
+        "generationSource": generation_source,
     }
+    if fallback_reason:
+        decision["fallbackReason"] = fallback_reason
+    return decision
 
 
 def maybe_generate_llm_cards(profile, context, cards=None, llm_client=None):
+    selected_cards, _, _ = resolve_decision_cards(profile, context, cards, llm_client)
+    return selected_cards
+
+
+def resolve_decision_cards(profile, context, cards=None, llm_client=None):
     if cards is not None:
-        return deepcopy(cards)
+        return deepcopy(cards), "provided", None
     if llm_client and llm_client.is_configured():
         try:
-            return deepcopy(llm_client.generate_cards(profile, context))
-        except Exception:
-            return deepcopy(INITIAL_DECISION_CARDS)
-    return deepcopy(INITIAL_DECISION_CARDS)
+            return deepcopy(llm_client.generate_cards(profile, context)), "llm", None
+        except Exception as exc:
+            return deepcopy(INITIAL_DECISION_CARDS), "fallback", str(exc)
+    return deepcopy(INITIAL_DECISION_CARDS), "fallback", "llm_not_configured"

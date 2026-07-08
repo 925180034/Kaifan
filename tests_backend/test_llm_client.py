@@ -1,4 +1,5 @@
 import unittest
+import json
 
 from server.llm_client import DeepSeekClient, system_prompt
 from server.recommender import build_decision
@@ -60,6 +61,10 @@ def valid_cards():
     ]
 
 
+def llm_response(cards):
+    return {"choices": [{"message": {"content": json.dumps({"cards": cards}, ensure_ascii=False)}}]}
+
+
 class DeepSeekClientTests(unittest.TestCase):
     def test_generate_cards_uses_flash_model_and_json_response_format(self):
         captured = {}
@@ -82,7 +87,7 @@ class DeepSeekClientTests(unittest.TestCase):
 
     def test_generate_cards_parses_valid_deepseek_json(self):
         def transport(url, headers, payload, timeout):
-            return {"choices": [{"message": {"content": '{"cards": ' + repr(valid_cards()).replace("'", '"') + "}"}}]}
+            return llm_response(valid_cards())
 
         client = DeepSeekClient(api_key="test-key", transport=transport)
 
@@ -97,7 +102,7 @@ class DeepSeekClientTests(unittest.TestCase):
         cards[2]["primaryAction"] = {"label": "查看地图", "action": "view_map"}
 
         def transport(url, headers, payload, timeout):
-            return {"choices": [{"message": {"content": '{"cards": ' + repr(cards).replace("'", '"') + "}"}}]}
+            return llm_response(cards)
 
         client = DeepSeekClient(api_key="test-key", transport=transport)
 
@@ -107,6 +112,84 @@ class DeepSeekClientTests(unittest.TestCase):
         dine_out = next(card for card in normalized if card["type"] == "dine_out")
         self.assertEqual(takeout["primaryAction"], {"label": "去美团搜", "action": "open_meituan"})
         self.assertEqual(dine_out["primaryAction"], {"label": "去点评搜", "action": "open_dianping"})
+
+    def test_generate_cards_orders_types_and_coerces_numeric_fields(self):
+        cards = valid_cards()
+        cards = [cards[2], cards[0], cards[1]]
+        cards[0]["estimatedMinutes"] = "70分钟"
+        cards[1]["baseScore"] = "82"
+        cards[2]["estimatedCostPerPerson"] = "约32元"
+
+        def transport(url, headers, payload, timeout):
+            return llm_response(cards)
+
+        client = DeepSeekClient(api_key="test-key", transport=transport)
+
+        normalized = client.generate_cards(DEFAULT_PROFILE, DEFAULT_CONTEXT)
+
+        self.assertEqual([card["type"] for card in normalized], ["cook", "takeout", "dine_out"])
+        self.assertIsInstance(normalized[0]["baseScore"], int)
+        self.assertEqual(normalized[1]["estimatedCostPerPerson"], 32)
+        self.assertEqual(normalized[2]["estimatedMinutes"], 70)
+
+    def test_generate_cards_rejects_exact_recent_meal_repeats(self):
+        context = {
+            **DEFAULT_CONTEXT,
+            "recentMeals": [{"id": "old-cook", "title": "虾仁豆腐盖饭"}],
+        }
+
+        def transport(url, headers, payload, timeout):
+            return llm_response(valid_cards())
+
+        client = DeepSeekClient(api_key="test-key", transport=transport)
+
+        with self.assertRaisesRegex(ValueError, "recent meal"):
+            client.generate_cards(DEFAULT_PROFILE, context)
+
+    def test_generate_cards_rejects_profile_forbidden_food(self):
+        profile = {**DEFAULT_PROFILE, "allergies": ["虾仁"], "dislikes": []}
+
+        def transport(url, headers, payload, timeout):
+            return llm_response(valid_cards())
+
+        client = DeepSeekClient(api_key="test-key", transport=transport)
+
+        with self.assertRaisesRegex(ValueError, "forbidden"):
+            client.generate_cards(profile, DEFAULT_CONTEXT)
+
+    def test_generate_cards_treats_missing_profile_constraint_lists_as_empty(self):
+        profile = {**DEFAULT_PROFILE, "allergies": None, "dislikes": None}
+
+        def transport(url, headers, payload, timeout):
+            return llm_response(valid_cards())
+
+        client = DeepSeekClient(api_key="test-key", transport=transport)
+
+        cards = client.generate_cards(profile, DEFAULT_CONTEXT)
+
+        self.assertEqual(len(cards), 3)
+
+    def test_build_decision_marks_llm_and_fallback_sources(self):
+        class WorkingClient:
+            def is_configured(self):
+                return True
+
+            def generate_cards(self, profile, context):
+                return valid_cards()
+
+        class FailingClient:
+            def is_configured(self):
+                return True
+
+            def generate_cards(self, profile, context):
+                raise RuntimeError("network failed")
+
+        llm_decision = build_decision(DEFAULT_PROFILE, DEFAULT_CONTEXT, llm_client=WorkingClient())
+        fallback_decision = build_decision(DEFAULT_PROFILE, DEFAULT_CONTEXT, llm_client=FailingClient())
+
+        self.assertEqual(llm_decision["generationSource"], "llm")
+        self.assertEqual(fallback_decision["generationSource"], "fallback")
+        self.assertIn("fallbackReason", fallback_decision)
 
     def test_build_decision_falls_back_when_llm_fails(self):
         class FailingClient:

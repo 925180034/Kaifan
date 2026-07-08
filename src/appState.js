@@ -2,6 +2,8 @@ export function applyDecisionState(state, decision, cloneCards = (cards) => [...
   state.decisionId = decision.decisionId;
   state.cards = cloneCards(decision.cards ?? state.cards);
   state.selectedCardId = decision.selectedCardId ?? null;
+  state.generationSource = decision.generationSource ?? "api";
+  state.fallbackReason = decision.fallbackReason ?? "";
   state.apiAvailable = true;
   return state;
 }

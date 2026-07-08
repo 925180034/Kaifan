@@ -39,6 +39,27 @@ test("applying a decision keeps locally edited profile fields", () => {
   assert.equal(state.apiAvailable, true);
 });
 
+test("applying a decision stores generation source metadata", () => {
+  const state = {
+    profile: {},
+    context: {},
+    cards: [],
+    apiAvailable: false,
+    generationSource: ""
+  };
+  const decision = {
+    decisionId: "decision-fallback",
+    cards: [{ id: "fallback-cook", type: "cook" }],
+    generationSource: "fallback",
+    fallbackReason: "LLM card contains forbidden food: 虾仁"
+  };
+
+  applyDecisionState(state, decision, (cards) => cards.map((card) => ({ ...card })));
+
+  assert.equal(state.generationSource, "fallback");
+  assert.equal(state.fallbackReason, "LLM card contains forbidden food: 虾仁");
+});
+
 test("starting a decision request marks generation as active", () => {
   const state = {
     isGenerating: false,

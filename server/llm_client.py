@@ -1,7 +1,16 @@
 import json
+import re
 import urllib.error
 import urllib.request
 
+
+TYPE_ORDER = ["cook", "takeout", "dine_out"]
+
+ACTION_BY_TYPE = {
+    "cook": {"label": "看菜谱", "action": "view_recipe", "accent": "green"},
+    "takeout": {"label": "去美团搜", "action": "open_meituan", "accent": "amber"},
+    "dine_out": {"label": "去点评搜", "action": "open_dianping", "accent": "blue"},
+}
 
 REQUIRED_CARD_FIELDS = {
     "id",
@@ -78,7 +87,9 @@ class DeepSeekClient:
         parsed = json.loads(content)
         cards = parsed.get("cards")
         validate_cards(cards)
-        return normalize_cards(cards)
+        normalized = normalize_cards(cards)
+        validate_profile_constraints(normalized, profile, context)
+        return normalized
 
     def _default_transport(self, url, headers, payload, timeout):
         request = urllib.request.Request(
@@ -174,16 +185,118 @@ def validate_cards(cards):
 
 
 def normalize_cards(cards):
-    action_by_type = {
-        "cook": {"label": "看菜谱", "action": "view_recipe", "accent": "green"},
-        "takeout": {"label": "去美团搜", "action": "open_meituan", "accent": "amber"},
-        "dine_out": {"label": "去点评搜", "action": "open_dianping", "accent": "blue"},
-    }
+    cards_by_type = {card["type"]: card for card in cards}
     normalized = []
-    for card in cards:
+    for card_type in TYPE_ORDER:
+        card = cards_by_type[card_type]
         next_card = dict(card)
-        spec = action_by_type[next_card["type"]]
+        spec = ACTION_BY_TYPE[card_type]
         next_card["primaryAction"] = {"label": spec["label"], "action": spec["action"]}
         next_card["accent"] = spec["accent"]
+        next_card["estimatedMinutes"] = coerce_int(next_card.get("estimatedMinutes"), "estimatedMinutes", next_card)
+        next_card["estimatedCostPerPerson"] = coerce_int(
+            next_card.get("estimatedCostPerPerson"),
+            "estimatedCostPerPerson",
+            next_card,
+        )
+        next_card["baseScore"] = max(0, min(100, coerce_int(next_card.get("baseScore"), "baseScore", next_card)))
+        next_card["searchKeywords"] = unique_clean_list(next_card.get("searchKeywords"))
+        if not next_card["searchKeywords"]:
+            raise ValueError("searchKeywords must be a non-empty list")
+        if card_type == "cook":
+            next_card["ingredients"] = normalize_ingredients(next_card.get("ingredients"))
+            next_card["steps"] = unique_clean_list(next_card.get("steps"))
+            if not next_card["ingredients"]:
+                raise ValueError("Cook card ingredients must be non-empty")
+            if not next_card["steps"]:
+                raise ValueError("Cook card steps must be non-empty")
+            if not isinstance(next_card.get("nutritionSummary"), dict):
+                raise ValueError("Cook card nutritionSummary must be an object")
         normalized.append(next_card)
     return normalized
+
+
+def coerce_int(value, field, card):
+    if isinstance(value, bool):
+        raise ValueError(f"Card {card.get('id', '<unknown>')} field {field} must be numeric")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    match = re.search(r"\d+", str(value or ""))
+    if match:
+        return int(match.group(0))
+    raise ValueError(f"Card {card.get('id', '<unknown>')} field {field} must be numeric")
+
+
+def unique_clean_list(values):
+    if not isinstance(values, list):
+        return []
+    seen = set()
+    result = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
+
+
+def normalize_ingredients(values):
+    if not isinstance(values, list):
+        return []
+    normalized = []
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        amount = str(item.get("amount") or "").strip()
+        group = str(item.get("group") or "食材").strip()
+        if name and amount:
+            normalized.append({"name": name, "amount": amount, "group": group or "食材"})
+    return normalized
+
+
+def validate_profile_constraints(cards, profile, context):
+    forbidden_terms = profile_terms(profile)
+    for card in cards:
+        searchable = normalize_text(card_search_text(card))
+        for term in forbidden_terms:
+            if normalize_text(term) in searchable:
+                raise ValueError(f"LLM card contains forbidden food: {term}")
+
+    recent_titles = [
+        meal.get("title")
+        for meal in (context or {}).get("recentMeals", [])
+        if isinstance(meal, dict) and meal.get("title")
+    ]
+    recent_texts = {normalize_text(title) for title in recent_titles}
+    for card in cards:
+        if normalize_text(card.get("title")) in recent_texts:
+            raise ValueError(f"LLM card repeats recent meal: {card.get('title')}")
+
+
+def profile_terms(profile):
+    raw_terms = [*safe_list((profile or {}).get("allergies")), *safe_list((profile or {}).get("dislikes"))]
+    return [term for term in unique_clean_list(raw_terms) if term != "其他"]
+
+
+def safe_list(value):
+    return value if isinstance(value, list) else []
+
+
+def card_search_text(card):
+    values = [
+        card.get("title"),
+        card.get("subtitle"),
+        card.get("reason"),
+        *card.get("searchKeywords", []),
+    ]
+    if card.get("type") == "cook":
+        values.extend(item.get("name") for item in card.get("ingredients", []) if isinstance(item, dict))
+    return " ".join(str(value or "") for value in values)
+
+
+def normalize_text(value):
+    return re.sub(r"\s+", "", str(value or "").lower())
