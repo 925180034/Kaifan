@@ -1,0 +1,15 @@
+[Unit]
+Description=Kaifan Dinner Decision Assistant
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/Kaifan
+EnvironmentFile=-/root/Kaifan/.env.local
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/root/Kaifan/.venv/bin/python -m uvicorn server.main:app --host 127.0.0.1 --port 6053
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

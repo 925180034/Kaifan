@@ -6,7 +6,9 @@ This repository contains a static H5/PWA MVP for the Dinner Decision Assistant p
 
 - `docs/晚餐决策助手-产品设计文档-v1.0.md`: product scope, MVP plan, decision engine, data model, and rollout strategy.
 - `docs/晚餐决策助手-前端设计文档-v1.0.md`: H5/PWA frontend UX, pages, components, states, and interaction guidance.
+- `docs/yuncoding.top-部署说明.md`: production domain deployment steps for `yuncoding.top`.
 - `index.html`, `styles.css`, `manifest.webmanifest`: static app shell, styling, and PWA metadata.
+- `deploy/`: Nginx and systemd examples for production deployment.
 - `src/`: application modules, including decision logic, sample data, storage, links, and UI orchestration.
 - `server/`: FastAPI backend, SQLite persistence, and recommendation helpers.
 - `tests/`: Node.js tests for behavior-focused modules.
