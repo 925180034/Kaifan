@@ -22,6 +22,7 @@ This repository contains a static H5/PWA MVP for the Dinner Decision Assistant p
 - `npm run backend:test`: run Python backend tests.
 - `npm run dev`: start the FastAPI app and static frontend at `http://127.0.0.1:6053`.
 - `npm run serve`: serve the static app at `http://127.0.0.1:4173`.
+- `npm run clean`: remove generated test and Python cache artifacts while preserving `node_modules/`, `data/`, and local env files.
 - `npm run check`: run the current verification suite.
 - `rg "TODO|TBD" docs src server tests tests_backend`: scan for placeholders before review.
 

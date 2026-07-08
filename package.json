@@ -10,6 +10,7 @@
     "backend:test": "python3 -m unittest discover -s tests_backend",
     "serve": "python3 -m http.server 4173",
     "dev": "uvicorn server.main:app --host 0.0.0.0 --port 6053",
+    "clean": "node scripts/clean.mjs",
     "check": "npm test && npm run backend:test"
   },
   "devDependencies": {
