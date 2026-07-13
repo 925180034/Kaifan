@@ -23,12 +23,21 @@ npm test             # 运行前端 Node.js 单元测试
 npm run backend:test # 运行 Python 后端测试
 npm run e2e          # 运行 Playwright 端到端测试
 npm run check        # 运行当前前后端检查
+npm run analytics    # 汇总 SQLite event_log 产品指标
 npm run clean        # 清理测试产物、缓存和构建目录
 ```
 
 ## 本地配置
 
 复制 `.env.example` 到 `.env.local`，再填入 DeepSeek 配置。不要提交 `.env.local`、数据库文件、日志、缓存和测试生成物；这些已经在 `.gitignore` 中排除。
+
+## 数据报告
+
+服务器上执行 `npm run analytics` 会读取 `data/kaifan.sqlite` 的 `event_log`，输出问卷完成率、采纳率、反馈率、平台跳转 fallback、平均换一批次数等核心指标。需要 JSON 时可运行：
+
+```bash
+python3 scripts/analytics_report.py --json
+```
 
 ## 清理规则
 

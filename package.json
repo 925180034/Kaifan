@@ -11,7 +11,8 @@
     "serve": "python3 -m http.server 4173",
     "dev": "uvicorn server.main:app --host 0.0.0.0 --port 6053",
     "clean": "node scripts/clean.mjs",
-    "check": "npm test && npm run backend:test"
+    "check": "npm test && npm run backend:test",
+    "analytics": "python3 scripts/analytics_report.py"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1"

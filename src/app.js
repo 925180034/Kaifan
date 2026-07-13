@@ -2,7 +2,7 @@ import {
   defaultDailyContext,
   defaultProfile,
   initialDecisionCards
-} from "./sampleData.js?v=20260713-learning-events-cache";
+} from "./sampleData.js?v=20260713-analytics-report";
 import {
   applyDecisionState,
   applyMemoryState,
@@ -19,7 +19,7 @@ import {
   replaceDecisionCardState,
   selectDecisionCardState,
   startDecisionRequest
-} from "./appState.js?v=20260713-learning-events-cache";
+} from "./appState.js?v=20260713-analytics-report";
 import {
   buildBudgetAlert,
   buildDecisionTradeoffs,
@@ -33,14 +33,14 @@ import {
   getTopRecommendation,
   rankDecisionCards,
   refreshCard
-} from "./decisionEngine.js?v=20260713-learning-events-cache";
-import { buildSearchUrl } from "./platformLinks.js?v=20260713-learning-events-cache";
+} from "./decisionEngine.js?v=20260713-analytics-report";
+import { buildSearchUrl } from "./platformLinks.js?v=20260713-analytics-report";
 import {
   applyProfilePreset,
   applyProfileTuningAction,
   buildProfileSummary,
   profilePresets
-} from "./profile.js?v=20260713-learning-events-cache";
+} from "./profile.js?v=20260713-analytics-report";
 import {
   buildDailyReview,
   buildFeedbackProfileSuggestion,
@@ -52,29 +52,29 @@ import {
   recordMealFeedback,
   recordFeedbackLearning,
   recordSelectedMeal
-} from "./learning.js?v=20260713-learning-events-cache";
-import { buildHistorySummary } from "./history.js?v=20260713-learning-events-cache";
-import { clearState, loadState, saveState } from "./storage.js?v=20260713-learning-events-cache";
-import { createLatestSync, createMemorySync } from "./memorySync.js?v=20260713-learning-events-cache";
+} from "./learning.js?v=20260713-analytics-report";
+import { buildHistorySummary } from "./history.js?v=20260713-analytics-report";
+import { clearState, loadState, saveState } from "./storage.js?v=20260713-analytics-report";
+import { createLatestSync, createMemorySync } from "./memorySync.js?v=20260713-analytics-report";
 import {
   buildActionPlan,
   buildAggregatedShoppingGroups,
   buildAggregatedShoppingList,
   buildShoppingList,
   platformLabel
-} from "./actionPlan.js?v=20260713-learning-events-cache";
+} from "./actionPlan.js?v=20260713-analytics-report";
 import {
   favoriteHasRecipeDetails,
   findRecipeCard,
   hydrateFavoriteRecipeDetails,
   isFavoriteMeal,
   toggleFavoriteMeal
-} from "./favorites.js?v=20260713-learning-events-cache";
-import { buildPrepTimeline } from "./prepTimeline.js?v=20260713-learning-events-cache";
-import { registerServiceWorker } from "./pwa.js?v=20260713-learning-events-cache";
-import { escapeHtml } from "./html.js?v=20260713-learning-events-cache";
-import { buildGenerationStatus } from "./generationStatus.js?v=20260713-learning-events-cache";
-import { scaleIngredientsForPeople, servingLabel } from "./servings.js?v=20260713-learning-events-cache";
+} from "./favorites.js?v=20260713-analytics-report";
+import { buildPrepTimeline } from "./prepTimeline.js?v=20260713-analytics-report";
+import { registerServiceWorker } from "./pwa.js?v=20260713-analytics-report";
+import { escapeHtml } from "./html.js?v=20260713-analytics-report";
+import { buildGenerationStatus } from "./generationStatus.js?v=20260713-analytics-report";
+import { scaleIngredientsForPeople, servingLabel } from "./servings.js?v=20260713-analytics-report";
 import {
   fetchMemory,
   fetchProfile,
@@ -86,7 +86,7 @@ import {
   selectDecisionCard,
   submitFeedback,
   trackEvent
-} from "./apiClient.js?v=20260713-learning-events-cache";
+} from "./apiClient.js?v=20260713-analytics-report";
 
 const stateKey = "kaifan.mvp.state";
 
@@ -1920,6 +1920,13 @@ function showToast(message) {
 async function refreshOne(type, currentId) {
   if (state.isGenerating) return;
 
+  track("refresh", {
+    scope: "one",
+    decisionId: state.decisionId || "local",
+    type,
+    currentId,
+    mood: state.context.mood
+  });
   const hadRemoteDecision = Boolean(state.decisionId);
 
   if (state.decisionId) {
@@ -1957,6 +1964,12 @@ async function refreshOne(type, currentId) {
 function refreshAll() {
   if (state.isGenerating) return;
 
+  track("refresh", {
+    scope: "all",
+    decisionId: state.decisionId || "local",
+    cardCount: state.cards.length,
+    mood: state.context.mood
+  });
   [...state.cards].forEach((card) =>
     replaceDecisionCardState(state, card.id, refreshCard(card.type, state.context.mood, card.id))
   );
