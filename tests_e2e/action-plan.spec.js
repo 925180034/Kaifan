@@ -145,6 +145,29 @@ test("opens a platform action plan from the dinner cards", async ({ page }) => {
   await expect(actionSheet).toContainText("下单前看一眼");
 });
 
+test("completes a takeout action plan and learns from feedback", async ({ page }) => {
+  await seedCompletedProfile(page);
+  await page.goto("/");
+
+  await page.locator('[data-action="open_meituan"]').first().click();
+
+  const actionSheet = page.locator("#actionSheet");
+  await expect(actionSheet).toHaveAttribute("aria-hidden", "false");
+  await actionSheet.getByRole("button", { name: "已下单/吃完，给反馈" }).click();
+
+  const feedbackSheet = page.locator("#feedbackSheet");
+  await expect(feedbackSheet).toHaveAttribute("aria-hidden", "false");
+  await feedbackSheet.getByRole("button", { name: "太贵" }).click();
+
+  await expect(feedbackSheet).toHaveAttribute("aria-hidden", "true");
+  await expect(page.locator("#learningSummary")).toContainText("记住 控制预算");
+
+  await page.getByRole("button", { name: /最近吃过/ }).click();
+  const historySheet = page.locator("#historySheet");
+  await expect(historySheet).toContainText("热汤面");
+  await expect(historySheet).toContainText("已完成");
+});
+
 test("uses nutrition goals when choosing the top recommendation", async ({ page }) => {
   await seedCompletedProfile(page);
   await page.goto("/");
@@ -473,7 +496,7 @@ test("shows quick feedback after a selected meal", async ({ page }) => {
   await expect(page.locator("#nextMealPlan")).toContainText("番茄虾仁豆腐饭");
   await page.locator("[data-next-meal-card='cook-tomato-shrimp-tofu']").click();
 
-  const selectedCard = page.locator("[data-card-id='cook-tomato-shrimp-tofu']");
+  const selectedCard = page.locator(".decision-card[data-card-id='cook-tomato-shrimp-tofu']");
   await expect(selectedCard).toContainText("来自下一餐建议");
   await expect(selectedCard).toContainText("省 ¥60/人");
 });

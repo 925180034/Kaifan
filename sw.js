@@ -1,4 +1,4 @@
-const CACHE_NAME = "kaifan-pwa-20260712-generation-status";
+const CACHE_NAME = "kaifan-pwa-20260713-action-loop";
 const APP_SHELL_FILES = [
   "/",
   "/index.html",

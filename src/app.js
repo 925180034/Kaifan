@@ -2,7 +2,7 @@ import {
   defaultDailyContext,
   defaultProfile,
   initialDecisionCards
-} from "./sampleData.js?v=20260712-generation-status";
+} from "./sampleData.js?v=20260713-action-loop";
 import {
   applyDecisionState,
   applyMemoryState,
@@ -19,7 +19,7 @@ import {
   replaceDecisionCardState,
   selectDecisionCardState,
   startDecisionRequest
-} from "./appState.js?v=20260712-generation-status";
+} from "./appState.js?v=20260713-action-loop";
 import {
   buildBudgetAlert,
   buildDecisionTradeoffs,
@@ -33,14 +33,14 @@ import {
   getTopRecommendation,
   rankDecisionCards,
   refreshCard
-} from "./decisionEngine.js?v=20260712-generation-status";
-import { buildSearchUrl } from "./platformLinks.js?v=20260712-generation-status";
+} from "./decisionEngine.js?v=20260713-action-loop";
+import { buildSearchUrl } from "./platformLinks.js?v=20260713-action-loop";
 import {
   applyProfilePreset,
   applyProfileTuningAction,
   buildProfileSummary,
   profilePresets
-} from "./profile.js?v=20260712-generation-status";
+} from "./profile.js?v=20260713-action-loop";
 import {
   buildDailyReview,
   buildFeedbackProfileSuggestion,
@@ -52,29 +52,29 @@ import {
   recordMealFeedback,
   recordFeedbackLearning,
   recordSelectedMeal
-} from "./learning.js?v=20260712-generation-status";
-import { buildHistorySummary } from "./history.js?v=20260712-generation-status";
-import { clearState, loadState, saveState } from "./storage.js?v=20260712-generation-status";
-import { createLatestSync, createMemorySync } from "./memorySync.js?v=20260712-generation-status";
+} from "./learning.js?v=20260713-action-loop";
+import { buildHistorySummary } from "./history.js?v=20260713-action-loop";
+import { clearState, loadState, saveState } from "./storage.js?v=20260713-action-loop";
+import { createLatestSync, createMemorySync } from "./memorySync.js?v=20260713-action-loop";
 import {
   buildActionPlan,
   buildAggregatedShoppingGroups,
   buildAggregatedShoppingList,
   buildShoppingList,
   platformLabel
-} from "./actionPlan.js?v=20260712-generation-status";
+} from "./actionPlan.js?v=20260713-action-loop";
 import {
   favoriteHasRecipeDetails,
   findRecipeCard,
   hydrateFavoriteRecipeDetails,
   isFavoriteMeal,
   toggleFavoriteMeal
-} from "./favorites.js?v=20260712-generation-status";
-import { buildPrepTimeline } from "./prepTimeline.js?v=20260712-generation-status";
-import { registerServiceWorker } from "./pwa.js?v=20260712-generation-status";
-import { escapeHtml } from "./html.js?v=20260712-generation-status";
-import { buildGenerationStatus } from "./generationStatus.js?v=20260712-generation-status";
-import { scaleIngredientsForPeople, servingLabel } from "./servings.js?v=20260712-generation-status";
+} from "./favorites.js?v=20260713-action-loop";
+import { buildPrepTimeline } from "./prepTimeline.js?v=20260713-action-loop";
+import { registerServiceWorker } from "./pwa.js?v=20260713-action-loop";
+import { escapeHtml } from "./html.js?v=20260713-action-loop";
+import { buildGenerationStatus } from "./generationStatus.js?v=20260713-action-loop";
+import { scaleIngredientsForPeople, servingLabel } from "./servings.js?v=20260713-action-loop";
 import {
   fetchMemory,
   fetchProfile,
@@ -85,7 +85,7 @@ import {
   saveProfile,
   selectDecisionCard,
   submitFeedback
-} from "./apiClient.js?v=20260712-generation-status";
+} from "./apiClient.js?v=20260713-action-loop";
 
 const stateKey = "kaifan.mvp.state";
 
@@ -1468,6 +1468,31 @@ function openPlatform(card) {
   showToast("已准备好平台入口和关键词");
 }
 
+function actionCompletionLabel(card) {
+  if (card.type === "takeout") return "已下单/吃完，给反馈";
+  if (card.type === "dine_out") return "已吃完，给反馈";
+  return "做完了，给反馈";
+}
+
+function actionCompletionToast(card) {
+  if (card.type === "takeout") return "已记录这顿外卖";
+  if (card.type === "dine_out") return "已记录这次探店";
+  return "已记录这顿做完了";
+}
+
+function completeActionPlan(card) {
+  recordCompletedMeal(state, card);
+  if (card.type === "cook") {
+    state.doneSteps[card.id] = (card.steps ?? []).map((_, index) => index);
+  }
+  closeSheet("actionSheet");
+  persist();
+  syncMemory();
+  render();
+  showFeedback(card.id);
+  showToast(actionCompletionToast(card));
+}
+
 function openActionPlan(card) {
   const ownedIngredientNames = ownedIngredientNamesForCard(card);
   const plan = buildActionPlan(card, state.profile, actionPlanContext(card));
@@ -1492,6 +1517,7 @@ function openActionPlan(card) {
         .join("")}
     </div>
     ${renderShoppingList(plan.shoppingList ?? [], card.id, ownedIngredientNames, plan.shoppingGroups ?? [])}
+    <button class="primary-button full-width" type="button" data-complete-action="${escapeHtml(card.id)}">${escapeHtml(actionCompletionLabel(card))}</button>
     <button class="ghost-button full-width" type="button" data-copy-keywords="${escapeHtml(card.id)}">复制搜索词</button>
     <h3>下单前看一眼</h3>
     <ul class="action-checklist">
@@ -2272,6 +2298,7 @@ document.body.addEventListener("click", (event) => {
   const quickFeedbackTag = event.target.closest("[data-quick-feedback-tag]");
   const feedbackProfileAction = event.target.closest("[data-feedback-profile-action]");
   const nextMealButton = event.target.closest("[data-next-meal-card]");
+  const completeActionButton = event.target.closest("[data-complete-action]");
   const copyKeywordsButton = event.target.closest("[data-copy-keywords]");
   const copyShoppingPlanButton = event.target.closest("[data-copy-shopping-plan]");
 
@@ -2324,6 +2351,12 @@ document.body.addEventListener("click", (event) => {
     }
     closeSheet("historySheet");
     openRecipe(card, "favorite");
+    return;
+  }
+  if (completeActionButton) {
+    const card = getActionCard(completeActionButton.dataset.completeAction);
+    if (!card) return;
+    completeActionPlan(card);
     return;
   }
   if (copyKeywordsButton) {
