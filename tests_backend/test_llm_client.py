@@ -65,6 +65,10 @@ def llm_response(cards):
     return {"choices": [{"message": {"content": json.dumps({"cards": cards}, ensure_ascii=False)}}]}
 
 
+def llm_response_content(content):
+    return {"choices": [{"message": {"content": content}}]}
+
+
 class DeepSeekClientTests(unittest.TestCase):
     def test_generate_cards_uses_flash_model_and_json_response_format(self):
         captured = {}
@@ -95,6 +99,32 @@ class DeepSeekClientTests(unittest.TestCase):
 
         self.assertEqual(len(cards), 3)
         self.assertEqual({card["type"] for card in cards}, {"cook", "takeout", "dine_out"})
+
+    def test_generate_cards_parses_markdown_wrapped_json(self):
+        content = "```json\n" + json.dumps({"cards": valid_cards()}, ensure_ascii=False) + "\n```"
+
+        def transport(url, headers, payload, timeout):
+            return llm_response_content(content)
+
+        client = DeepSeekClient(api_key="test-key", transport=transport)
+
+        cards = client.generate_cards(DEFAULT_PROFILE, DEFAULT_CONTEXT)
+
+        self.assertEqual(len(cards), 3)
+        self.assertEqual(cards[0]["type"], "cook")
+
+    def test_generate_cards_extracts_json_object_from_extra_text(self):
+        content = "好的,以下是 JSON:\n" + json.dumps({"cards": valid_cards()}, ensure_ascii=False) + "\n请查收。"
+
+        def transport(url, headers, payload, timeout):
+            return llm_response_content(content)
+
+        client = DeepSeekClient(api_key="test-key", transport=transport)
+
+        cards = client.generate_cards(DEFAULT_PROFILE, DEFAULT_CONTEXT)
+
+        self.assertEqual(len(cards), 3)
+        self.assertEqual(cards[1]["type"], "takeout")
 
     def test_generate_cards_normalizes_primary_actions_for_frontend(self):
         cards = valid_cards()
@@ -132,6 +162,85 @@ class DeepSeekClientTests(unittest.TestCase):
         self.assertEqual(normalized[1]["estimatedCostPerPerson"], 32)
         self.assertEqual(normalized[2]["estimatedMinutes"], 70)
 
+    def test_generate_cards_normalizes_search_keyword_strings(self):
+        cards = valid_cards()
+        cards[0]["searchKeywords"] = "虾仁、豆腐, 高蛋白"
+        cards[1]["searchKeywords"] = "热汤面 / 少油"
+        cards[2]["searchKeywords"] = "附近\n粤菜"
+
+        def transport(url, headers, payload, timeout):
+            return llm_response(cards)
+
+        client = DeepSeekClient(api_key="test-key", transport=transport)
+
+        try:
+            normalized = client.generate_cards(DEFAULT_PROFILE, DEFAULT_CONTEXT)
+        except ValueError as exc:
+            self.fail(f"expected string searchKeywords to be normalized, got: {exc}")
+
+        self.assertEqual(normalized[0]["searchKeywords"], ["虾仁", "豆腐", "高蛋白"])
+        self.assertEqual(normalized[1]["searchKeywords"], ["热汤面", "少油"])
+        self.assertEqual(normalized[2]["searchKeywords"], ["附近", "粤菜"])
+
+    def test_generate_cards_normalizes_string_ingredients(self):
+        cards = valid_cards()
+        cards[0]["ingredients"] = "虾仁 200g、内酯豆腐 1盒、米饭 1碗"
+
+        def transport(url, headers, payload, timeout):
+            return llm_response(cards)
+
+        client = DeepSeekClient(api_key="test-key", transport=transport)
+
+        try:
+            normalized = client.generate_cards(DEFAULT_PROFILE, DEFAULT_CONTEXT)
+        except ValueError as exc:
+            self.fail(f"expected string ingredients to be normalized, got: {exc}")
+
+        self.assertEqual(
+            normalized[0]["ingredients"],
+            [
+                {"name": "虾仁", "amount": "200g", "group": "食材"},
+                {"name": "内酯豆腐", "amount": "1盒", "group": "食材"},
+                {"name": "米饭", "amount": "1碗", "group": "食材"},
+            ],
+        )
+
+    def test_generate_cards_preserves_step_list_sentences_with_commas(self):
+        cards = valid_cards()
+        cards[0]["steps"] = ["炒熟虾仁和豆腐,盖在米饭上。"]
+
+        def transport(url, headers, payload, timeout):
+            return llm_response(cards)
+
+        client = DeepSeekClient(api_key="test-key", transport=transport)
+
+        normalized = client.generate_cards(DEFAULT_PROFILE, DEFAULT_CONTEXT)
+
+        self.assertEqual(normalized[0]["steps"], ["炒熟虾仁和豆腐,盖在米饭上。"])
+
+    def test_generate_cards_normalizes_string_nutrition_summary(self):
+        cards = valid_cards()
+        cards[0]["nutritionSummary"] = "约620 kcal/人，蛋白质约35g/人，少油高蛋白"
+
+        def transport(url, headers, payload, timeout):
+            return llm_response(cards)
+
+        client = DeepSeekClient(api_key="test-key", transport=transport)
+
+        try:
+            normalized = client.generate_cards(DEFAULT_PROFILE, DEFAULT_CONTEXT)
+        except ValueError as exc:
+            self.fail(f"expected string nutritionSummary to be normalized, got: {exc}")
+
+        self.assertEqual(
+            normalized[0]["nutritionSummary"],
+            {
+                "calories": "约620 kcal/人",
+                "protein": "约35g/人",
+                "note": "约620 kcal/人，蛋白质约35g/人，少油高蛋白",
+            },
+        )
+
     def test_generate_cards_rejects_exact_recent_meal_repeats(self):
         context = {
             **DEFAULT_CONTEXT,
@@ -156,6 +265,85 @@ class DeepSeekClientTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "forbidden"):
             client.generate_cards(profile, DEFAULT_CONTEXT)
+
+    def test_generate_cards_rejects_taboos_profile_field(self):
+        profile = {**DEFAULT_PROFILE, "allergies": [], "dislikes": [], "taboos": ["虾仁"]}
+
+        def transport(url, headers, payload, timeout):
+            return llm_response(valid_cards())
+
+        client = DeepSeekClient(api_key="test-key", transport=transport, max_attempts=1)
+
+        with self.assertRaisesRegex(ValueError, "forbidden"):
+            client.generate_cards(profile, DEFAULT_CONTEXT)
+
+    def test_generate_cards_rejects_allergy_label_suffix_matches_food_name(self):
+        profile = {**DEFAULT_PROFILE, "allergies": ["花生过敏"], "dislikes": []}
+        cards = valid_cards()
+        cards[0]["title"] = "豆腐盖饭"
+        cards[0]["searchKeywords"] = ["豆腐", "高蛋白"]
+        cards[0]["ingredients"] = [{"name": "豆腐", "amount": "1盒", "group": "豆制品"}]
+        cards[0]["steps"] = ["豆腐煎香后出锅前撒花生碎。"]
+
+        def transport(url, headers, payload, timeout):
+            return llm_response(cards)
+
+        client = DeepSeekClient(api_key="test-key", transport=transport, max_attempts=1)
+
+        with self.assertRaisesRegex(ValueError, "forbidden"):
+            client.generate_cards(profile, DEFAULT_CONTEXT)
+
+    def test_generate_cards_rejects_forbidden_food_in_steps(self):
+        profile = {**DEFAULT_PROFILE, "allergies": ["花生"], "dislikes": []}
+        cards = valid_cards()
+        cards[0]["title"] = "豆腐盖饭"
+        cards[0]["searchKeywords"] = ["豆腐", "高蛋白"]
+        cards[0]["ingredients"] = [{"name": "豆腐", "amount": "1盒", "group": "豆制品"}]
+        cards[0]["steps"] = ["豆腐煎香后出锅前撒花生碎。"]
+
+        def transport(url, headers, payload, timeout):
+            return llm_response(cards)
+
+        client = DeepSeekClient(api_key="test-key", transport=transport, max_attempts=1)
+
+        with self.assertRaisesRegex(ValueError, "forbidden"):
+            client.generate_cards(profile, DEFAULT_CONTEXT)
+
+    def test_generate_cards_rejects_forbidden_food_in_nutrition_summary(self):
+        profile = {**DEFAULT_PROFILE, "allergies": ["花生"], "dislikes": []}
+        cards = valid_cards()
+        cards[0]["title"] = "豆腐盖饭"
+        cards[0]["searchKeywords"] = ["豆腐", "高蛋白"]
+        cards[0]["ingredients"] = [{"name": "豆腐", "amount": "1盒", "group": "豆制品"}]
+        cards[0]["nutritionSummary"] = {"note": "高蛋白,用花生油增香"}
+
+        def transport(url, headers, payload, timeout):
+            return llm_response(cards)
+
+        client = DeepSeekClient(api_key="test-key", transport=transport, max_attempts=1)
+
+        with self.assertRaisesRegex(ValueError, "forbidden"):
+            client.generate_cards(profile, DEFAULT_CONTEXT)
+
+    def test_generate_cards_retries_with_validation_error_feedback(self):
+        attempts = []
+        invalid_cards = valid_cards()
+        invalid_cards[0]["title"] = "香菜虾仁豆腐盖饭"
+        invalid_cards[0]["searchKeywords"] = ["香菜", "虾仁", "豆腐"]
+
+        def transport(url, headers, payload, timeout):
+            attempts.append(payload)
+            if len(attempts) == 1:
+                return llm_response(invalid_cards)
+            return llm_response(valid_cards())
+
+        client = DeepSeekClient(api_key="test-key", transport=transport)
+
+        cards = client.generate_cards(DEFAULT_PROFILE, DEFAULT_CONTEXT)
+
+        self.assertEqual(len(cards), 3)
+        self.assertEqual(len(attempts), 2)
+        self.assertIn("LLM card contains forbidden food: 香菜", attempts[1]["messages"][-1]["content"])
 
     def test_generate_cards_treats_missing_profile_constraint_lists_as_empty(self):
         profile = {**DEFAULT_PROFILE, "allergies": None, "dislikes": None}
@@ -204,12 +392,32 @@ class DeepSeekClientTests(unittest.TestCase):
         self.assertEqual(len(decision["cards"]), 3)
         self.assertIn("topRecommendation", decision)
 
+    def test_build_decision_sanitizes_sensitive_llm_fallback_errors(self):
+        class FailingClient:
+            def is_configured(self):
+                return True
+
+            def generate_cards(self, profile, context):
+                raise RuntimeError(
+                    'DeepSeek API error 401: {"error": {"message": "invalid api key sk-secret123"}} Authorization: Bearer sk-secret123'
+                )
+
+        decision = build_decision(DEFAULT_PROFILE, DEFAULT_CONTEXT, llm_client=FailingClient())
+
+        self.assertEqual(decision["generationSource"], "fallback")
+        self.assertEqual(decision["fallbackReason"], "llm_provider_error")
+        self.assertNotIn("sk-secret123", decision["fallbackReason"])
+        self.assertNotIn("Authorization", decision["fallbackReason"])
+        self.assertNotIn("DeepSeek API error", decision["fallbackReason"])
+
     def test_system_prompt_guides_recent_meals_and_feedback_learning(self):
         prompt = system_prompt()
 
         self.assertIn("recentMeals", prompt)
+        self.assertIn("favoriteMeals", prompt)
         self.assertIn("feedbackLearning", prompt)
         self.assertIn("避免重复", prompt)
+        self.assertIn("长期偏好", prompt)
 
 
 if __name__ == "__main__":

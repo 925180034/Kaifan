@@ -1,6 +1,8 @@
 from copy import deepcopy
 from uuid import uuid4
 
+import re
+
 from .sample_data import DINE_OUT_OPTIONS, INITIAL_DECISION_CARDS, RECIPE_OPTIONS, TAKEOUT_OPTIONS
 
 
@@ -97,5 +99,14 @@ def resolve_decision_cards(profile, context, cards=None, llm_client=None):
         try:
             return deepcopy(llm_client.generate_cards(profile, context)), "llm", None
         except Exception as exc:
-            return deepcopy(INITIAL_DECISION_CARDS), "fallback", str(exc)
+            return deepcopy(INITIAL_DECISION_CARDS), "fallback", sanitize_fallback_reason(exc)
     return deepcopy(INITIAL_DECISION_CARDS), "fallback", "llm_not_configured"
+
+
+def sanitize_fallback_reason(exc):
+    message = str(exc or "").lower()
+    if isinstance(exc, ValueError):
+        return "llm_validation_failed"
+    if isinstance(exc, RuntimeError) or re.search(r"(deepseek|api|http|401|403|429|timeout|network|connection|token|key|bearer|sk-)", message):
+        return "llm_provider_error"
+    return "llm_generation_failed"

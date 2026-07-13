@@ -56,10 +56,20 @@ class Database:
                     user_id TEXT NOT NULL,
                     card_id TEXT NOT NULL,
                     tag TEXT NOT NULL,
+                    client_created_at TEXT,
+                    meal_selected_at TEXT,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
                 """
             )
+            self._ensure_feedback_metadata_columns(connection)
+
+    def _ensure_feedback_metadata_columns(self, connection):
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(feedback)")}
+        if "client_created_at" not in columns:
+            connection.execute("ALTER TABLE feedback ADD COLUMN client_created_at TEXT")
+        if "meal_selected_at" not in columns:
+            connection.execute("ALTER TABLE feedback ADD COLUMN meal_selected_at TEXT")
 
     def save_profile(self, user_id, profile):
         with self.connect() as connection:
@@ -155,23 +165,31 @@ class Database:
         decision = self.get_decision(decision_id)
         if not decision:
             return None
+        valid_card_ids = {card.get("id") for card in decision.get("cards", []) if isinstance(card, dict)}
+        if card_id not in valid_card_ids:
+            return None
         decision["selectedCardId"] = card_id
         return self.update_decision(decision)
 
-    def save_feedback(self, decision_id, user_id, card_id, tag):
+    def save_feedback(self, decision_id, user_id, card_id, tag, created_at=None, meal_selected_at=None):
         with self.connect() as connection:
             cursor = connection.execute(
                 """
-                INSERT INTO feedback (decision_id, user_id, card_id, tag)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO feedback (decision_id, user_id, card_id, tag, client_created_at, meal_selected_at)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (decision_id, user_id, card_id, tag),
+                (decision_id, user_id, card_id, tag, created_at, meal_selected_at),
             )
             feedback_id = cursor.lastrowid
-        return {
+        feedback = {
             "id": feedback_id,
             "decisionId": decision_id,
             "userId": user_id,
             "cardId": card_id,
             "tag": tag,
         }
+        if created_at:
+            feedback["createdAt"] = created_at
+        if meal_selected_at:
+            feedback["mealSelectedAt"] = meal_selected_at
+        return feedback

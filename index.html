@@ -17,7 +17,7 @@
     />
     <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
     <link rel="manifest" href="./manifest.webmanifest" />
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=20260712-generation-status" />
   </head>
   <body>
     <main class="app-shell app-screen" id="todayScreen">
@@ -52,11 +52,17 @@
 
       <p class="generation-status sr-only" id="generationStatus" data-state="ready">当前为本地方案</p>
       <button class="sr-only" id="regenerateButton" type="button">按画像生成</button>
+      <section class="recovery-panel" id="recoveryPanel" aria-live="polite" hidden></section>
+      <section class="daily-review" id="dailyReview" aria-live="polite" hidden></section>
+      <section class="next-meal-plan" id="nextMealPlan" aria-live="polite" hidden></section>
+      <section class="quick-feedback-panel" id="quickFeedbackPanel" aria-live="polite" hidden></section>
 
       <div class="screen-stack" id="mainContent">
         <section class="top-panel" id="topRecommendation" aria-live="polite"></section>
         <section class="decision-list" id="decisionList" aria-label="今晚方案"></section>
       </div>
+
+      <section class="learning-summary" id="learningSummary" aria-live="polite" hidden></section>
 
       <footer class="today-footer">
         <button class="refresh-button" id="refreshAllButton" type="button">
@@ -101,6 +107,6 @@
     </aside>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./src/app.js"></script>
+    <script type="module" src="./src/app.js?v=20260712-generation-status"></script>
   </body>
 </html>

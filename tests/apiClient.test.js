@@ -5,6 +5,7 @@ import {
   fetchMemory,
   fetchProfile,
   fetchTodayDecision,
+  isRecoverableApiFailure,
   refreshDecisionCard,
   saveMemory,
   saveProfile,
@@ -25,6 +26,68 @@ function createFetchRecorder(responseBody = { ok: true }) {
   };
   return { calls, fetchImpl };
 }
+
+function createFailedFetch(responseBody, { status = 500, jsonThrows = false } = {}) {
+  return async () => ({
+    ok: false,
+    status,
+    async json() {
+      if (jsonThrows) {
+        throw new Error("Invalid JSON");
+      }
+      return responseBody;
+    }
+  });
+}
+
+test("failed API requests include backend error detail", async () => {
+  const fetchImpl = createFailedFetch({ detail: "Decision not found" }, { status: 404 });
+
+  await assert.rejects(
+    () =>
+      fetchTodayDecision(
+        {
+          userId: "user-1",
+          profile: { peopleCount: "2" },
+          context: { mood: "normal" }
+        },
+        fetchImpl
+      ),
+    /API request failed: 404 Decision not found/
+  );
+});
+
+test("failed API requests fall back to status when the error body is not JSON", async () => {
+  const fetchImpl = createFailedFetch(null, { status: 502, jsonThrows: true });
+
+  await assert.rejects(() => fetchProfile("user-1", fetchImpl), { message: "API request failed: 502" });
+});
+
+test("failed API requests expose status and detail metadata", async () => {
+  const fetchImpl = createFailedFetch({ detail: "Card not found" }, { status: 404 });
+
+  await assert.rejects(
+    () => fetchProfile("user-1", fetchImpl),
+    (error) => {
+      assert.equal(error.message, "API request failed: 404 Card not found");
+      assert.equal(error.status, 404);
+      assert.equal(error.detail, "Card not found");
+      return true;
+    }
+  );
+});
+
+test("isRecoverableApiFailure only falls back for network and server errors", () => {
+  assert.equal(isRecoverableApiFailure(new TypeError("Failed to fetch")), true);
+
+  const serverError = new Error("API request failed: 502");
+  serverError.status = 502;
+  assert.equal(isRecoverableApiFailure(serverError), true);
+
+  const invalidRequest = new Error("API request failed: 404 Card not found");
+  invalidRequest.status = 404;
+  assert.equal(isRecoverableApiFailure(invalidRequest), false);
+});
 
 test("fetchTodayDecision posts profile and context to the backend", async () => {
   const { calls, fetchImpl } = createFetchRecorder({ decisionId: "decision-1" });
@@ -88,11 +151,26 @@ test("decision mutations call their matching backend endpoints", async () => {
     fetchImpl
   );
   await submitFeedback(
-    { decisionId: "decision-1", userId: "user-1", cardId: "card-1", tag: "好吃" },
+    {
+      decisionId: "decision-1",
+      userId: "user-1",
+      cardId: "card-1",
+      tag: "好吃",
+      createdAt: "2026-07-09T19:30:00.000Z",
+      mealSelectedAt: "2026-07-09T12:00:00.000Z"
+    },
     fetchImpl
   );
 
   assert.equal(calls[0].url, "/api/decision/select");
   assert.equal(calls[1].url, "/api/decision/decision-1/refresh");
   assert.equal(calls[2].url, "/api/feedback");
+  assert.deepEqual(JSON.parse(calls[2].options.body), {
+    decisionId: "decision-1",
+    userId: "user-1",
+    cardId: "card-1",
+    tag: "好吃",
+    createdAt: "2026-07-09T19:30:00.000Z",
+    mealSelectedAt: "2026-07-09T12:00:00.000Z"
+  });
 });

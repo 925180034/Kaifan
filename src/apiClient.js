@@ -6,7 +6,7 @@ async function postJson(url, payload, fetchImpl = globalThis.fetch) {
   });
 
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status}`);
+    throw await buildApiError(response);
   }
 
   return response.json();
@@ -16,10 +16,55 @@ async function getJson(url, fetchImpl = globalThis.fetch) {
   const response = await fetchImpl(url, { method: "GET" });
 
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status}`);
+    throw await buildApiError(response);
   }
 
   return response.json();
+}
+
+async function buildApiError(response) {
+  const detail = extractErrorDetail(await readJsonSafely(response));
+  return createApiError(response.status, detail);
+}
+
+function createApiError(status, detail = "") {
+  const message = detail ? `API request failed: ${status} ${detail}` : `API request failed: ${status}`;
+  const error = new Error(message);
+  error.status = status;
+  error.detail = detail;
+  return error;
+}
+
+export function isRecoverableApiFailure(error) {
+  if (!error || typeof error.status !== "number") return true;
+  return error.status >= 500;
+}
+
+async function readJsonSafely(response) {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+function extractErrorDetail(body) {
+  if (!body || typeof body !== "object") return "";
+
+  const detail = body.detail ?? body.message ?? body.error;
+  if (Array.isArray(detail)) {
+    return detail.map(formatDetailItem).filter(Boolean).join("; ");
+  }
+  return formatDetailItem(detail);
+}
+
+function formatDetailItem(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "object") {
+    return String(value.msg ?? value.message ?? JSON.stringify(value)).trim();
+  }
+  return String(value).trim();
 }
 
 export function fetchTodayDecision({ userId, profile, context }, fetchImpl) {
@@ -54,6 +99,17 @@ export function refreshDecisionCard({ decisionId, userId, type, currentId, mood 
   );
 }
 
-export function submitFeedback({ decisionId, userId, cardId, tag }, fetchImpl) {
-  return postJson("/api/feedback", { decisionId, userId, cardId, tag }, fetchImpl);
+export function submitFeedback({ decisionId, userId, cardId, tag, createdAt, mealSelectedAt }, fetchImpl) {
+  return postJson(
+    "/api/feedback",
+    {
+      decisionId,
+      userId,
+      cardId,
+      tag,
+      ...(createdAt ? { createdAt } : {}),
+      ...(mealSelectedAt ? { mealSelectedAt } : {})
+    },
+    fetchImpl
+  );
 }

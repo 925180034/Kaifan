@@ -2,43 +2,96 @@ import {
   defaultDailyContext,
   defaultProfile,
   initialDecisionCards
-} from "./sampleData.js";
+} from "./sampleData.js?v=20260712-generation-status";
 import {
   applyDecisionState,
+  applyMemoryState,
+  applyProfileState,
+  beginMemorySync,
+  beginProfileSync,
+  completeMemorySync,
+  completeProfileSync,
   failDecisionRequest,
+  shouldRetryMemorySync,
+  shouldRetryProfileSync,
   finishDecisionRequest,
+  markLocalDecisionState,
+  replaceDecisionCardState,
+  selectDecisionCardState,
   startDecisionRequest
-} from "./appState.js";
+} from "./appState.js?v=20260712-generation-status";
 import {
+  buildBudgetAlert,
+  buildDecisionTradeoffs,
+  buildDailyReviewImpacts,
+  buildPreferenceMatchDetails,
+  buildProfileTuningActions,
+  buildRankingComparisons,
+  buildRecommendationBreakdown,
+  buildRecommendationSignals,
   getMoodLabel,
   getTopRecommendation,
   rankDecisionCards,
   refreshCard
-} from "./decisionEngine.js";
-import { buildSearchUrl } from "./platformLinks.js";
-import { buildProfileSummary } from "./profile.js";
+} from "./decisionEngine.js?v=20260712-generation-status";
+import { buildSearchUrl } from "./platformLinks.js?v=20260712-generation-status";
 import {
+  applyProfilePreset,
+  applyProfileTuningAction,
+  buildProfileSummary,
+  profilePresets
+} from "./profile.js?v=20260712-generation-status";
+import {
+  buildDailyReview,
+  buildFeedbackProfileSuggestion,
   buildGenerationContext,
+  buildLearningSummary,
+  buildNextMealPlan,
+  buildQuickFeedbackPrompt,
+  recordCompletedMeal,
+  recordMealFeedback,
   recordFeedbackLearning,
   recordSelectedMeal
-} from "./learning.js";
-import { buildHistorySummary } from "./history.js";
-import { clearState, loadState, saveState } from "./storage.js";
-import { buildActionPlan, platformLabel } from "./actionPlan.js";
+} from "./learning.js?v=20260712-generation-status";
+import { buildHistorySummary } from "./history.js?v=20260712-generation-status";
+import { clearState, loadState, saveState } from "./storage.js?v=20260712-generation-status";
+import { createLatestSync, createMemorySync } from "./memorySync.js?v=20260712-generation-status";
+import {
+  buildActionPlan,
+  buildAggregatedShoppingGroups,
+  buildAggregatedShoppingList,
+  buildShoppingList,
+  platformLabel
+} from "./actionPlan.js?v=20260712-generation-status";
+import {
+  favoriteHasRecipeDetails,
+  findRecipeCard,
+  hydrateFavoriteRecipeDetails,
+  isFavoriteMeal,
+  toggleFavoriteMeal
+} from "./favorites.js?v=20260712-generation-status";
+import { buildPrepTimeline } from "./prepTimeline.js?v=20260712-generation-status";
+import { registerServiceWorker } from "./pwa.js?v=20260712-generation-status";
+import { escapeHtml } from "./html.js?v=20260712-generation-status";
+import { buildGenerationStatus } from "./generationStatus.js?v=20260712-generation-status";
+import { scaleIngredientsForPeople, servingLabel } from "./servings.js?v=20260712-generation-status";
 import {
   fetchMemory,
   fetchProfile,
   fetchTodayDecision,
+  isRecoverableApiFailure,
   refreshDecisionCard,
   saveMemory,
   saveProfile,
   selectDecisionCard,
   submitFeedback
-} from "./apiClient.js";
+} from "./apiClient.js?v=20260712-generation-status";
 
 const stateKey = "kaifan.mvp.state";
 
-const feedbackOptions = ["好吃,下次还吃", "太贵", "太麻烦", "没吃饱", "太油/太咸", "不合口味"];
+const feedbackOptions = ["好吃,下次还吃", "太贵", "太麻烦", "没吃饱", "不够满足", "太油/太咸", "不合口味"];
+const memorySync = createMemorySync(saveMemory);
+const profileSync = createLatestSync(saveProfile);
 
 const requiredProfileFields = [
   "peopleCount",
@@ -110,9 +163,13 @@ const state = loadState(stateKey, {
   context: defaultDailyContext,
   cards: cloneCards(initialDecisionCards),
   selectedCardId: null,
+  selectedActionContext: null,
   selectedRecipeId: null,
+  selectedRecipeSource: "current",
   view: "today",
   profileCompleted: false,
+  profileSyncPending: false,
+  memorySyncPending: false,
   onboardingStep: 0,
   draftProfile: null,
   settingsPicker: null,
@@ -121,6 +178,7 @@ const state = loadState(stateKey, {
   doneSteps: {},
   feedback: [],
   recentMeals: [],
+  favoriteMeals: [],
   feedbackLearning: null,
   apiAvailable: false,
   generationSource: "",
@@ -137,15 +195,26 @@ if (!state.userId) {
 
 state.view ??= "today";
 state.profileCompleted = Boolean(state.profileCompleted);
+state.profileSyncPending = Boolean(state.profileSyncPending);
+state.memorySyncPending = Boolean(state.memorySyncPending);
 state.onboardingStep ??= 0;
 state.draftProfile ??= null;
 state.settingsPicker ??= null;
 state.clearDataArmed ??= false;
 state.checkedIngredients ??= {};
 state.doneSteps ??= {};
+state.recentMeals ??= [];
+state.feedback ??= [];
+state.feedbackLearning ??= null;
+state.favoriteMeals ??= [];
+state.selectedActionContext ??= null;
 state.selectedRecipeId ??= null;
+state.selectedRecipeSource ??= "current";
+hydrateFavoriteRecipeDetails(state, state.cards);
 state.generationSource ??= "";
 state.fallbackReason ??= "";
+state.isGenerating = Boolean(state.isGenerating);
+state.generationError ??= "";
 
 const elements = {
   todayScreen: document.querySelector("#todayScreen"),
@@ -160,6 +229,11 @@ const elements = {
   regenerateButton: document.querySelector("#regenerateButton"),
   refreshAllButton: document.querySelector("#refreshAllButton"),
   generationStatus: document.querySelector("#generationStatus"),
+  recoveryPanel: document.querySelector("#recoveryPanel"),
+  dailyReview: document.querySelector("#dailyReview"),
+  nextMealPlan: document.querySelector("#nextMealPlan"),
+  quickFeedbackPanel: document.querySelector("#quickFeedbackPanel"),
+  learningSummary: document.querySelector("#learningSummary"),
   actionSheet: document.querySelector("#actionSheet"),
   actionContent: document.querySelector("#actionContent"),
   feedbackSheet: document.querySelector("#feedbackSheet"),
@@ -188,6 +262,9 @@ function persist() {
 
 function applyDecision(decision) {
   applyDecisionState(state, decision, cloneCards);
+  if (hydrateFavoriteRecipeDetails(state, state.cards)) {
+    syncMemory();
+  }
 }
 
 async function initializeFromBackend() {
@@ -204,6 +281,12 @@ async function initializeFromBackend() {
 
 async function hydrateUserState() {
   await Promise.all([hydrateProfile(), hydrateMemory()]);
+  if (shouldRetryProfileSync(state)) {
+    syncProfile();
+  }
+  if (shouldRetryMemorySync(state)) {
+    syncMemory();
+  }
   persist();
   render();
 }
@@ -211,7 +294,7 @@ async function hydrateUserState() {
 async function hydrateProfile() {
   try {
     const response = await fetchProfile(state.userId);
-    state.profile = response.profile ?? state.profile;
+    applyProfileState(state, response);
   } catch {
     showToast("画像读取失败,已使用本地设置");
   }
@@ -222,9 +305,10 @@ async function hydrateMemory() {
     const response = await fetchMemory(state.userId);
     const memory = response.memory ?? {};
     if (hasMemory(memory)) {
-      state.recentMeals = memory.recentMeals ?? [];
-      state.feedbackLearning = memory.feedbackLearning ?? null;
-      state.feedback = memory.feedback ?? [];
+      applyMemoryState(state, memory);
+      if (hydrateFavoriteRecipeDetails(state, state.cards)) {
+        syncMemory();
+      }
       return;
     }
     if (hasMemory(state)) {
@@ -254,17 +338,18 @@ async function regenerateDecision(reason = "manual") {
       showToast("已按你的画像重新生成");
     }
   } catch {
-    const failed = failDecisionRequest(state, requestId, "生成失败,已保留上一版方案");
+    const failed = failDecisionRequest(state, requestId, "生成暂时失败");
     if (!failed) return;
     persist();
     render();
-    showToast("生成失败,已保留上一版方案");
+    showToast("生成暂时失败,已保留本地方案");
   }
 }
 
 function memorySnapshot() {
   return {
     recentMeals: state.recentMeals ?? [],
+    favoriteMeals: state.favoriteMeals ?? [],
     feedbackLearning: state.feedbackLearning ?? null,
     feedback: state.feedback ?? []
   };
@@ -273,6 +358,7 @@ function memorySnapshot() {
 function hasMemory(memory) {
   return Boolean(
     memory?.recentMeals?.length ||
+      memory?.favoriteMeals?.length ||
       memory?.feedback?.length ||
       memory?.feedbackLearning
   );
@@ -334,15 +420,45 @@ function uniqueValues(values) {
 }
 
 function syncMemory() {
-  saveMemory(state.userId, memorySnapshot()).catch(() => showToast("记录已本地保存,后端稍后同步"));
+  beginMemorySync(state);
+  persist();
+  memorySync(state.userId, memorySnapshot())
+    .then(() => {
+      completeMemorySync(state);
+      persist();
+    })
+    .catch(() => {
+      beginMemorySync(state);
+      persist();
+      showToast("记录已本地保存,后端稍后同步");
+    });
 }
 
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+function syncProfile(message = "画像已本地保存,后端稍后同步") {
+  beginProfileSync(state);
+  persist();
+  profileSync(state.userId, state.profile)
+    .then(() => {
+      completeProfileSync(state);
+      persist();
+    })
+    .catch(() => {
+      beginProfileSync(state);
+      persist();
+      showToast(message);
+    });
+}
+
+function uniqueClean(values = []) {
+  const seen = new Set();
+  return values
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean)
+    .filter((value) => {
+      if (seen.has(value)) return false;
+      seen.add(value);
+      return true;
+    });
 }
 
 function currentView() {
@@ -379,6 +495,11 @@ function render() {
     renderCards();
   }
   renderGenerationStatus();
+  renderRecoveryPanel();
+  renderDailyReview();
+  renderNextMealPlan();
+  renderQuickFeedbackPanel();
+  renderLearningSummary();
   renderRecentSummary();
   renderOnboarding();
   renderSettingsPage();
@@ -408,7 +529,7 @@ function renderOnboarding() {
       </div>
       <div class="flow-count"><strong>${step + 1}</strong>/${total}</div>
     </header>
-    <div class="question-body">
+      <div class="question-body">
       <h1>${escapeHtml(content.title)}</h1>
       <p>${escapeHtml(content.hint)}</p>
       ${content.body}
@@ -423,6 +544,21 @@ function onboardingStepTemplate(step, draft) {
       title: "几个人吃？",
       hint: "按今晚一起吃饭的人数算",
       body: `
+        <div class="preset-panel">
+          <h2>先选一个快捷画像</h2>
+          <div class="preset-grid">
+            ${profilePresets
+              .map(
+                (preset) => `
+                  <button class="preset-card ${draft.presetId === preset.id ? "is-selected" : ""}" type="button" data-profile-preset="${escapeHtml(preset.id)}">
+                    <strong>${escapeHtml(preset.title)}</strong>
+                    <span>${escapeHtml(preset.hint)}</span>
+                  </button>
+                `
+              )
+              .join("")}
+          </div>
+        </div>
         <div class="choice-grid two-col">
           ${profileOptions.peopleCount
             .map(
@@ -525,8 +661,13 @@ function onboardingStepTemplate(step, draft) {
 }
 
 function renderTopRecommendation() {
-  const top = getTopRecommendation(state.cards, state.context);
+  const top = getTopRecommendation(state.cards, recommendationContext());
   const typeLabel = cardTypeLabel(top.type);
+  const signals = buildRecommendationSignals(top, state.profile, recommendationContext());
+  const preferenceDetails = buildPreferenceMatchDetails(top, state.profile);
+  const scoreBreakdown = buildRecommendationBreakdown(top, recommendationContext());
+  const tuningActions = buildProfileTuningActions(top, state.profile, recommendationContext());
+  const tradeoffs = buildDecisionTradeoffs(top, state.profile);
   elements.topRecommendation.className = "top-panel";
   elements.topRecommendation.innerHTML = `
     <div class="hero-label">
@@ -534,23 +675,37 @@ function renderTopRecommendation() {
       <span>今晚最推荐 · ${escapeHtml(typeLabel)}</span>
     </div>
     <div class="hero-title">${escapeHtml(top.title)}</div>
+    ${signalRow(signals)}
+    ${preferenceDetailRow(preferenceDetails)}
+    ${scoreBreakdownRow(scoreBreakdown)}
+    ${profileTuningRow(tuningActions)}
+    ${tradeoffGrid(tradeoffs)}
     <p class="hero-reason">${escapeHtml(top.reason)}</p>
     <button class="primary-button" type="button" data-primary="${escapeHtml(top.id)}">别问了，就这个</button>
   `;
 }
 
 function renderCards() {
-  const ranked = rankDecisionCards(state.cards, state.context);
-  elements.decisionList.innerHTML = ranked.map(cardTemplate).join("");
+  const ranked = rankDecisionCards(state.cards, recommendationContext());
+  const comparisonById = Object.fromEntries(
+    buildRankingComparisons(state.cards, recommendationContext()).map((comparison) => [comparison.cardId, comparison])
+  );
+  elements.decisionList.innerHTML = ranked.map((card) => cardTemplate(card, comparisonById[card.id])).join("");
 }
 
-function cardTemplate(card) {
+function cardTemplate(card, rankingComparison) {
   const typeLabel = cardTypeLabel(card.type);
   const accent = accentColors[card.accent] ?? accentColors.green;
   const selected = state.selectedCardId === card.id;
   const dimmed = state.selectedCardId && !selected;
   const secondaryAction = card.type === "takeout" ? "copy-card-keywords" : "refresh";
   const secondaryLabel = card.type === "takeout" ? "复制关键词" : "换这个";
+  const signals = buildRecommendationSignals(card, state.profile, recommendationContext());
+  const preferenceDetails = buildPreferenceMatchDetails(card, state.profile);
+  const scoreBreakdown = buildRecommendationBreakdown(card, recommendationContext());
+  const tradeoffs = buildDecisionTradeoffs(card, state.profile);
+  const budgetAlert = buildBudgetAlert(card, state.profile, state.cards);
+  const actionContext = selected ? selectedActionContextFor(card.id) : null;
 
   return `
     <article class="decision-card ${dimmed ? "is-dimmed" : ""}" data-card-id="${escapeHtml(card.id)}" style="--card-accent:${accent}; --tag-bg:${tagBackgrounds[card.type] ?? tagBackgrounds.cook}; --card-border:${selected ? accent : "#EBE6DC"}">
@@ -559,10 +714,17 @@ function cardTemplate(card) {
         ${selected ? selectedTemplate(accent) : ""}
       </div>
       <div class="card-body">
+        ${rankingComparisonTemplate(rankingComparison)}
         <div class="card-title">${escapeHtml(card.title)}</div>
+        ${selectedActionContextTemplate(actionContext)}
         <div class="metric-pills">
           ${cardPills(card).map((pill) => `<span class="metric-pill">${escapeHtml(pill)}</span>`).join("")}
         </div>
+        ${signalRow(signals)}
+        ${preferenceDetailRow(preferenceDetails)}
+        ${scoreBreakdownRow(scoreBreakdown)}
+        ${budgetAlertTemplate(budgetAlert)}
+        ${tradeoffGrid(tradeoffs)}
         <p class="card-reason">${escapeHtml(card.reason || card.subtitle || "")}</p>
         <div class="card-actions">
           <button class="card-button" type="button" data-action="${escapeHtml(card.primaryAction.action)}" data-card-id="${escapeHtml(card.id)}">${escapeHtml(primaryLabel(card))}</button>
@@ -570,6 +732,165 @@ function cardTemplate(card) {
         </div>
       </div>
     </article>
+  `;
+}
+
+function selectedActionContextFor(cardId) {
+  const context = state.selectedActionContext;
+  return context?.cardId === cardId ? context : null;
+}
+
+function selectedActionContextTemplate(context) {
+  if (!context) return "";
+  return `
+    <div class="selected-action-context" aria-label="选择来源">
+      <strong>来自下一餐建议 · ${escapeHtml(context.label || "已选择")}</strong>
+      ${context.reasons?.length ? `<span>${context.reasons.map((reason) => `<b>${escapeHtml(reason)}</b>`).join("")}</span>` : ""}
+    </div>
+  `;
+}
+
+function budgetAlertTemplate(alert) {
+  if (!alert) return "";
+  return `
+    <div class="budget-alert" aria-label="预算预警">
+      <strong>${escapeHtml(alert.title)}</strong>
+      <span>${escapeHtml(alert.detail)}</span>
+      <div class="budget-alert-tags">
+        ${alert.alternatives.map((item) => `<b>${escapeHtml(item)}</b>`).join("")}
+      </div>
+      ${budgetSwapSuggestion(alert.swapSuggestion)}
+      ${budgetActionLinks(alert.actions)}
+    </div>
+  `;
+}
+
+function budgetSwapSuggestion(suggestion) {
+  if (!suggestion) return "";
+  return `
+    <button class="budget-swap-button" type="button" data-budget-swap="${escapeHtml(suggestion.cardId)}">
+      <strong>${escapeHtml(suggestion.label)}</strong>
+      <span>${escapeHtml(suggestion.title)} · ${escapeHtml(suggestion.savingText)}</span>
+      <small>${escapeHtml(suggestion.detail)}</small>
+    </button>
+  `;
+}
+
+function budgetActionLinks(actions = []) {
+  if (!actions.length) return "";
+  return `
+    <div class="budget-action-row">
+      ${actions
+        .map((action) => {
+          const url = action.type === "platform" ? buildSearchUrl(action.platform, action.keywords ?? []) : "";
+          if (!url) return "";
+          return `
+            <a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">
+              ${escapeHtml(action.label)}
+            </a>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function rankingComparisonTemplate(comparison) {
+  if (!comparison) return "";
+  return `
+    <div class="ranking-comparison">
+      <strong>${escapeHtml(comparison.rankLabel)}</strong>
+      <span>${escapeHtml(comparison.deltaText)}</span>
+      <small>${escapeHtml(comparison.reason)}</small>
+    </div>
+  `;
+}
+
+function tradeoffGrid(metrics) {
+  return `
+    <div class="tradeoff-grid" aria-label="时间预算营养复杂度">
+      ${metrics
+        .map(
+          (metric) => `
+            <div class="tradeoff-item">
+              <div class="tradeoff-top">
+                <span>${escapeHtml(metric.label)}</span>
+                <strong>${escapeHtml(metric.text)}</strong>
+              </div>
+              <div class="tradeoff-track" aria-hidden="true">
+                <i style="width:${Math.max(0, Math.min(100, metric.value))}%"></i>
+              </div>
+            </div>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function recommendationContext() {
+  return {
+    ...state.context,
+    profile: state.profile,
+    recentMeals: state.recentMeals,
+    feedbackLearning: state.feedbackLearning
+  };
+}
+
+function signalRow(signals) {
+  if (!signals.length) return "";
+  return `
+    <div class="signal-row">
+      ${signals.map((signal) => `<span>${escapeHtml(signal)}</span>`).join("")}
+    </div>
+  `;
+}
+
+function preferenceDetailRow(details) {
+  if (!details.length) return "";
+  return `
+    <div class="preference-detail-row" aria-label="画像偏好命中">
+      ${details.map((detail) => `<span>${escapeHtml(detail)}</span>`).join("")}
+    </div>
+  `;
+}
+
+function scoreBreakdownRow(items) {
+  if (!items.length) return "";
+  return `
+    <div class="score-breakdown-row" aria-label="推荐分数拆解">
+      ${items
+        .map(
+          (item) => `
+            <span data-direction="${escapeHtml(item.direction)}">
+              <b>${escapeHtml(item.label)}</b>
+              <small>${escapeHtml(item.text)}</small>
+            </span>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function profileTuningRow(actions) {
+  if (!actions.length) return "";
+  return `
+    <div class="profile-tuning-row" aria-label="快速调整画像">
+      <strong>想让推荐更准？</strong>
+      <div>
+        ${actions
+          .map(
+            (action) => `
+              <button type="button" data-profile-tuning="${escapeHtml(action.id)}" title="${escapeHtml(action.detail)}">
+                <span>${escapeHtml(action.label)}</span>
+                <small>${escapeHtml(action.detail)}</small>
+              </button>
+            `
+          )
+          .join("")}
+      </div>
+    </div>
   `;
 }
 
@@ -647,21 +968,183 @@ function formatTopDate(value) {
 function renderGenerationStatus() {
   elements.regenerateButton.disabled = state.isGenerating;
   elements.refreshAllButton.disabled = state.isGenerating;
-  elements.generationStatus.textContent = generationStatusText();
-  elements.generationStatus.dataset.state = state.isGenerating
-    ? "loading"
-    : state.generationError
-      ? "error"
-      : "ready";
+  const status = buildGenerationStatus(state);
+  elements.generationStatus.textContent = status.text;
+  elements.generationStatus.dataset.state = status.state;
+}
+
+function renderRecoveryPanel() {
+  if (!state.generationError) {
+    elements.recoveryPanel.hidden = true;
+    elements.recoveryPanel.innerHTML = "";
+    return;
+  }
+
+  elements.recoveryPanel.hidden = false;
+  elements.recoveryPanel.innerHTML = `
+    <div class="recovery-copy">
+      <strong>${escapeHtml(state.generationError)}</strong>
+      <span>已保留本地方案,你可以先继续选今晚吃什么。</span>
+    </div>
+    <button class="recovery-button" type="button" data-retry-generation ${state.isGenerating ? "disabled" : ""}>
+      ${retryIcon()}
+      重试生成
+    </button>
+  `;
+}
+
+function renderDailyReview() {
+  const review = buildDailyReview(state.feedbackLearning);
+  const top = state.cards?.length ? getTopRecommendation(state.cards, recommendationContext()) : null;
+  const impacts = top ? buildDailyReviewImpacts(top, recommendationContext()) : [];
+  elements.dailyReview.hidden = !review;
+  if (!review) {
+    elements.dailyReview.innerHTML = "";
+    return;
+  }
+
+  elements.dailyReview.innerHTML = `
+    <div>
+      <strong>${escapeHtml(review.title)}</strong>
+      <p>${escapeHtml(review.text)}</p>
+    </div>
+    ${review.chips.length ? `<div class="daily-review-chips">${review.chips.map((chip) => `<span>${escapeHtml(chip)}</span>`).join("")}</div>` : ""}
+    ${impacts.length ? dailyReviewImpactRow(impacts) : ""}
+  `;
+}
+
+function dailyReviewImpactRow(impacts) {
+  return `
+    <div class="daily-review-impact-row" aria-label="复盘影响本次推荐">
+      <b>影响本次推荐</b>
+      ${impacts
+        .map(
+          (impact) => `
+            <span>
+              ${escapeHtml(impact.label)}
+              <small>${escapeHtml(impact.text)}</small>
+            </span>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderNextMealPlan() {
+  const plan = buildNextMealPlan(state.recentMeals, state.profile, state.feedbackLearning, state.cards);
+  elements.nextMealPlan.hidden = !plan;
+  if (!plan) {
+    elements.nextMealPlan.innerHTML = "";
+    return;
+  }
+
+  elements.nextMealPlan.innerHTML = `
+    <div>
+      <strong>${escapeHtml(plan.title)}</strong>
+      <p>${escapeHtml(plan.text)}</p>
+    </div>
+    ${plan.chips.length ? `<div class="next-meal-chips">${plan.chips.map((chip) => `<span>${escapeHtml(chip)}</span>`).join("")}</div>` : ""}
+    ${nextMealActionTemplate(plan.action)}
+  `;
+}
+
+function nextMealActionTemplate(action) {
+  if (!action) return "";
+  return `
+    <button class="next-meal-action" type="button" data-next-meal-card="${escapeHtml(action.cardId)}" data-next-meal-label="${escapeHtml(action.label)}" data-next-meal-reasons="${escapeHtml((action.reasons ?? []).join("|"))}">
+      <strong>${escapeHtml(action.label)}</strong>
+      <span>${escapeHtml(action.title)}</span>
+      <small>${escapeHtml(action.detail)}</small>
+      ${nextMealActionReasons(action.reasons)}
+    </button>
+  `;
+}
+
+function nextMealActionReasons(reasons = []) {
+  if (!reasons.length) return "";
+  return `
+    <em class="next-meal-action-reasons" aria-label="推荐依据">
+      ${reasons.map((reason) => `<b>${escapeHtml(reason)}</b>`).join("")}
+    </em>
+  `;
+}
+
+function renderQuickFeedbackPanel() {
+  const prompt = buildQuickFeedbackPrompt(state.recentMeals, state.feedback);
+  elements.quickFeedbackPanel.hidden = !prompt;
+  if (!prompt) {
+    elements.quickFeedbackPanel.innerHTML = "";
+    return;
+  }
+
+  elements.quickFeedbackPanel.innerHTML = `
+    <div>
+      <strong>${escapeHtml(prompt.title)}</strong>
+      <p>${escapeHtml(prompt.text)}</p>
+    </div>
+    <div class="quick-feedback-tags">
+      ${prompt.tags
+        .map(
+          (tag) => `
+            <button type="button" data-quick-feedback-tag="${escapeHtml(tag)}" data-card-id="${escapeHtml(prompt.cardId)}">
+              ${escapeHtml(tag)}
+            </button>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderLearningSummary() {
+  const summary = buildLearningSummary(state.feedbackLearning);
+  const profileSuggestion = buildFeedbackProfileSuggestion(state.feedbackLearning, state.profile);
+  elements.learningSummary.hidden = !summary;
+  if (!summary) {
+    elements.learningSummary.innerHTML = "";
+    return;
+  }
+
+  elements.learningSummary.innerHTML = `
+    <div class="learning-title">${escapeHtml(summary.title)}</div>
+    <div class="learning-chip-row">
+      ${summary.chips.map((chip) => `<span>${escapeHtml(chip)}</span>`).join("")}
+    </div>
+    ${summary.lastFeedbackText ? `<p>${escapeHtml(summary.lastFeedbackText)}</p>` : ""}
+    ${learningImpactTemplate(summary.impact)}
+    ${profileSuggestion ? feedbackProfileSuggestionTemplate(profileSuggestion) : ""}
+  `;
+}
+
+function learningImpactTemplate(impact) {
+  if (!impact) return "";
+  return `
+    <div class="learning-impact">
+      <strong>${escapeHtml(impact.title)}</strong>
+      <div>
+        ${impact.items.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function feedbackProfileSuggestionTemplate(suggestion) {
+  return `
+    <div class="feedback-profile-suggestion">
+      <div>
+        <strong>${escapeHtml(suggestion.title)}</strong>
+        <span>${escapeHtml(suggestion.detail)}</span>
+      </div>
+      <button type="button" data-feedback-profile-action="${escapeHtml(suggestion.actionId)}">
+        ${escapeHtml(suggestion.buttonLabel)}
+      </button>
+    </div>
+  `;
 }
 
 function generationStatusText() {
-  if (state.isGenerating) return "正在按你的画像生成...";
-  if (state.generationError) return state.generationError;
-  if (state.generationSource === "llm") return "AI 已根据画像生成";
-  if (state.generationSource === "fallback") return "当前为本地兜底方案";
-  if (state.apiAvailable) return "已根据画像生成";
-  return "当前为本地方案";
+  return buildGenerationStatus(state).text;
 }
 
 function renderSettingsPage() {
@@ -778,8 +1261,16 @@ function getCard(id) {
   return state.cards.find((card) => card.id === id);
 }
 
-function selectCard(card) {
-  state.selectedCardId = card.id;
+function getRecipeCard(id, options = {}) {
+  return findRecipeCard(state.cards, state.favoriteMeals, id, options);
+}
+
+function getActionCard(id) {
+  return getRecipeCard(id) ?? getCard(id);
+}
+
+function selectCard(card, actionContext = null) {
+  selectDecisionCardState(state, card.id, actionContext);
   recordSelectedMeal(state, card);
   persist();
   syncMemory();
@@ -800,8 +1291,9 @@ function selectCard(card) {
   openPlatform(card);
 }
 
-function openRecipe(card) {
+function openRecipe(card, source = "current") {
   state.selectedRecipeId = card.id;
+  state.selectedRecipeSource = source;
   state.view = "recipe";
   state.checkedIngredients[card.id] ??= [];
   state.doneSteps[card.id] ??= [];
@@ -811,20 +1303,23 @@ function openRecipe(card) {
 
 function renderRecipePage() {
   if (currentView() !== "recipe") return;
-  const card = getCard(state.selectedRecipeId) ?? state.cards.find((item) => item.type === "cook");
+  const card = getRecipeCard(state.selectedRecipeId, { preferFavorite: state.selectedRecipeSource === "favorite" }) ?? state.cards.find((item) => item.type === "cook");
   if (!card) {
     setView("today");
     return;
   }
   const checked = state.checkedIngredients[card.id] ?? [];
   const doneSteps = state.doneSteps[card.id] ?? [];
-  const grouped = groupIngredients(card.ingredients);
+  const favorite = isFavoriteMeal(state, card.id);
+  const servingText = servingLabel(state.profile);
+  const grouped = groupIngredients(scaleIngredientsForPeople(card.ingredients, state.profile.peopleCount));
+  const prepTimeline = buildPrepTimeline(card);
   elements.recipeScreen.innerHTML = `
     <header class="flow-top-bar simple">
       <button class="icon-button back-button" type="button" data-recipe-back aria-label="返回">
         ${chevronLeftIcon()}
       </button>
-      <button class="icon-button favorite-button" type="button" aria-label="收藏">
+      <button class="icon-button favorite-button ${favorite ? "is-active" : ""}" type="button" data-toggle-favorite="${escapeHtml(card.id)}" aria-label="${favorite ? "取消收藏" : "收藏"}" aria-pressed="${favorite}">
         ${starIcon()}
       </button>
     </header>
@@ -836,8 +1331,9 @@ function renderRecipePage() {
           ${card.nutritionSummary?.protein ? `<span class="metric-pill">蛋白质 ${escapeHtml(card.nutritionSummary.protein)}</span>` : ""}
         </div>
       </section>
+      ${prepTimelineTemplate(prepTimeline)}
       <section class="detail-card">
-        <h2>食材</h2>
+        <h2>食材 · ${escapeHtml(servingText)}</h2>
         ${Object.entries(grouped)
           .map(
             ([group, items]) => `
@@ -888,6 +1384,34 @@ function renderRecipePage() {
   `;
 }
 
+function prepTimelineTemplate(timeline) {
+  if (!timeline?.items?.length) return "";
+
+  return `
+    <section class="prep-timeline" aria-label="备菜顺序">
+      <div class="panel-heading">
+        <h2>备菜顺序</h2>
+        <span>${escapeHtml(timeline.totalMinutes)} 分钟</span>
+      </div>
+      <div class="prep-timeline-list">
+        ${timeline.items
+          .map(
+            (item) => `
+              <article class="prep-timeline-item">
+                <strong>${escapeHtml(item.timeText)}</strong>
+                <div>
+                  <h3>${escapeHtml(item.title)}</h3>
+                  <p>${escapeHtml(item.detail)}</p>
+                </div>
+              </article>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
 function groupIngredients(ingredients = []) {
   return ingredients.reduce((groups, item) => {
     groups[item.group || "食材"] ??= [];
@@ -900,19 +1424,61 @@ function ingredientId(item, index) {
   return `${item.name}-${item.amount}-${index}`;
 }
 
+function actionPlanContext(card) {
+  return {
+    ...recommendationContext(),
+    ownedIngredientNames: ownedIngredientNamesForCard(card)
+  };
+}
+
+function shoppingListOptions(card) {
+  return { ownedIngredientNames: ownedIngredientNamesForCard(card) };
+}
+
+function favoriteShoppingOptions() {
+  return { ownedIngredientNames: ownedIngredientNamesForCards(state.favoriteMeals) };
+}
+
+function ownedIngredientNamesForCards(cards = []) {
+  return uniqueClean(cards.flatMap((card) => ownedIngredientNamesForCard(card)));
+}
+
+function ownedIngredientNamesForCard(card) {
+  if (!card?.ingredients?.length) return [];
+  const checked = state.checkedIngredients[card.id] ?? [];
+  if (!checked.length) return [];
+
+  return uniqueClean(ingredientEntries(card)
+    .filter((item) => checked.includes(item.id))
+    .map((item) => item.name));
+}
+
+function ingredientEntries(card) {
+  const grouped = groupIngredients(scaleIngredientsForPeople(card.ingredients ?? [], state.profile.peopleCount));
+  return Object.values(grouped).flatMap((items) =>
+    items.map((item, index) => ({
+      id: ingredientId(item, index),
+      name: item.name
+    }))
+  );
+}
+
 function openPlatform(card) {
   openActionPlan(card);
   showToast("已准备好平台入口和关键词");
 }
 
 function openActionPlan(card) {
-  const plan = buildActionPlan(card, state.profile);
+  const ownedIngredientNames = ownedIngredientNamesForCard(card);
+  const plan = buildActionPlan(card, state.profile, actionPlanContext(card));
   elements.actionContent.innerHTML = `
     <h2 class="sheet-title">${escapeHtml(plan.title)}</h2>
     <p>${escapeHtml(plan.summary)}</p>
     <div class="keyword-row" aria-label="搜索关键词">
       ${plan.keywordChips.map((keyword) => `<span>${escapeHtml(keyword)}</span>`).join("")}
     </div>
+    ${plan.noteChips?.length ? renderNoteChips(plan.noteChips) : ""}
+    ${renderReadinessSummary(plan.readinessSummary)}
     <div class="platform-action-list">
       ${plan.actions
         .map(
@@ -925,6 +1491,7 @@ function openActionPlan(card) {
         )
         .join("")}
     </div>
+    ${renderShoppingList(plan.shoppingList ?? [], card.id, ownedIngredientNames, plan.shoppingGroups ?? [])}
     <button class="ghost-button full-width" type="button" data-copy-keywords="${escapeHtml(card.id)}">复制搜索词</button>
     <h3>下单前看一眼</h3>
     <ul class="action-checklist">
@@ -934,10 +1501,104 @@ function openActionPlan(card) {
   openSheet("actionSheet");
 }
 
+function renderNoteChips(notes) {
+  return `
+    <div class="note-row" aria-label="行动备注">
+      ${notes.map((note) => `<span>${escapeHtml(note)}</span>`).join("")}
+    </div>
+  `;
+}
+
+function renderReadinessSummary(summary) {
+  if (!summary) return "";
+  const status = summary.status === "ready_to_cook" ? "ready" : "need";
+
+  return `
+    <section class="readiness-panel status-${escapeHtml(status)}">
+      <div class="readiness-heading">
+        <span>${escapeHtml(status === "ready" ? "可开做" : "先补货")}</span>
+        <strong>${escapeHtml(summary.title)}</strong>
+      </div>
+      <div class="readiness-metrics">
+        ${(summary.metrics ?? [])
+          .map(
+            (metric) => `
+              <div>
+                <span>${escapeHtml(metric.label)}</span>
+                <strong>${escapeHtml(metric.value)}</strong>
+              </div>
+            `
+          )
+          .join("")}
+      </div>
+      <p>${escapeHtml(summary.helper)}</p>
+    </section>
+  `;
+}
+
+function renderShoppingList(items, cardId, ownedIngredientNames = [], groups = []) {
+  const ownedNames = uniqueClean(ownedIngredientNames);
+  const displayGroups = normalizeShoppingGroups(groups, items);
+  if (!displayGroups.length && !ownedNames.length) return "";
+
+  return `
+    <div class="shopping-list-panel">
+      <div class="panel-heading">
+        <h3>采购清单</h3>
+        ${items.length ? `<button class="text-button" type="button" data-copy-shopping-plan="${escapeHtml(cardId)}">复制</button>` : ""}
+      </div>
+      ${ownedNames.length ? `<p class="shopping-list-note">已扣除已有食材: ${escapeHtml(ownedNames.slice(0, 4).join("、"))}</p>` : ""}
+      ${
+        displayGroups.length
+          ? shoppingGroupsTemplate(displayGroups)
+          : `<p class="shopping-list-empty">这道菜的食材已确认齐了,暂时不用补货。</p>`
+      }
+    </div>
+  `;
+}
+
+function normalizeShoppingGroups(groups = [], fallbackItems = []) {
+  if (groups.length) return groups;
+  return fallbackItems.length ? [{ label: "待采购", items: fallbackItems }] : [];
+}
+
+function shoppingGroupsTemplate(groups = []) {
+  return `
+    <div class="shopping-group-list">
+      ${groups
+        .map(
+          (group) => `
+            <section class="shopping-group">
+              <h4>${escapeHtml(group.label)}</h4>
+              <div class="shopping-list-grid">
+                ${(group.items ?? []).map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
+              </div>
+            </section>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
 function copyShoppingList(card) {
-  const text = card.ingredients.map((item) => `${item.name} ${item.amount}`).join("\n");
-  copyText(text);
+  const list = buildShoppingList(card, state.profile, shoppingListOptions(card));
+  if (!list.length) {
+    showToast("已确认食材都在家里,暂时不用采购");
+    return;
+  }
+  copyText(list.join("\n"));
   showToast("购物清单已复制");
+}
+
+function completeRecipe(card) {
+  recordCompletedMeal(state, card);
+  state.doneSteps[card.id] = (card.steps ?? []).map((_, index) => index);
+  persist();
+  syncMemory();
+  render();
+  showFeedback(card.id);
+  showToast("已记录这顿做完了");
 }
 
 function copyText(text) {
@@ -968,12 +1629,54 @@ function showFeedback(cardId) {
   openSheet("feedbackSheet");
 }
 
+function applyMealFeedback(cardId, tag, options = {}) {
+  const meal = state.recentMeals.find((item) => item.id === cardId);
+  const card = getCard(cardId) ?? meal;
+  const { feedback, recorded } = recordMealFeedback(state, cardId, tag, undefined, meal);
+  if (!recorded) {
+    if (options.closeSheet) {
+      closeSheet(options.closeSheet);
+    }
+    render();
+    showToast("这顿反馈已记录过");
+    return;
+  }
+  if (card) {
+    recordFeedbackLearning(state, card, feedback.tag, feedback.createdAt);
+  }
+  state.view = "today";
+  state.selectedRecipeId = null;
+  state.selectedRecipeSource = "current";
+  persist();
+  syncMemory();
+  if (state.decisionId) {
+    submitFeedback({
+      decisionId: state.decisionId,
+      userId: state.userId,
+      cardId: feedback.cardId,
+      tag: feedback.tag,
+      createdAt: feedback.createdAt,
+      mealSelectedAt: feedback.mealSelectedAt
+    }).catch(() => showToast("反馈已本地记录,后端稍后同步"));
+  }
+  if (options.closeSheet) {
+    closeSheet(options.closeSheet);
+  }
+  showToast("反馈已记录,正在更新推荐");
+  regenerateDecision("feedback");
+}
+
 function openHistory() {
-  elements.historyContent.innerHTML = historyTemplate(buildHistorySummary(state));
+  const shoppingOptions = favoriteShoppingOptions();
+  elements.historyContent.innerHTML = historyTemplate(
+    buildHistorySummary(state),
+    buildAggregatedShoppingList(state.favoriteMeals, state.profile, shoppingOptions),
+    buildAggregatedShoppingGroups(state.favoriteMeals, state.profile, shoppingOptions)
+  );
   openSheet("historySheet");
 }
 
-function historyTemplate(summary) {
+function historyTemplate(summary, favoriteShoppingList = [], favoriteShoppingGroups = []) {
   if (!summary.hasHistory) {
     return `
       <h2 class="sheet-title">晚餐记录</h2>
@@ -985,10 +1688,15 @@ function historyTemplate(summary) {
     <h2 class="sheet-title">晚餐记录</h2>
     <div class="history-stats">
       <div><strong>${summary.recentMeals.length}</strong><span>最近选择</span></div>
+      <div><strong>${summary.favoriteMeals.length}</strong><span>常吃收藏</span></div>
       <div><strong>${summary.feedbackCount}</strong><span>反馈次数</span></div>
       <div><strong>${summary.positiveFeedbackCount}</strong><span>喜欢</span></div>
       <div><strong>${summary.negativeFeedbackCount}</strong><span>避雷</span></div>
     </div>
+    ${spendSummarySection(summary.spendSummary)}
+    ${favoriteMealSection(summary.favoriteMeals)}
+    ${favoriteShoppingListSection(favoriteShoppingList, favoriteShoppingGroups)}
+    ${historyInsightSection(summary.insights)}
     <h3>最近吃过</h3>
     ${historyMealList(summary.recentMeals)}
     <h3>偏好学习</h3>
@@ -998,7 +1706,97 @@ function historyTemplate(summary) {
   `;
 }
 
-function historyMealList(meals) {
+function spendSummarySection(summary) {
+  if (!summary?.hasSpend) return "";
+  const budgetStatus = ["within", "over", "under"].includes(summary.budgetStatus) ? summary.budgetStatus : "";
+  const statusClass = budgetStatus ? ` status-${budgetStatus}` : "";
+  const detail = summary.budgetMessage
+    ? `${summary.budgetMessage} · 按推荐方案预估,不是实际账单`
+    : `${summary.averageLabel} · 按推荐方案预估,不是实际账单`;
+
+  return `
+    <section class="spend-summary-panel${statusClass}">
+      <div>
+        <span>预计花费</span>
+        <strong>${escapeHtml(summary.label)}</strong>
+      </div>
+      <p>${escapeHtml(detail)}</p>
+    </section>
+  `;
+}
+
+function favoriteShoppingListSection(items, groups = []) {
+  if (!items.length) return "";
+  const displayGroups = normalizeShoppingGroups(groups, items);
+
+  return `
+    <section class="shopping-list-panel favorite-shopping-panel">
+      <div class="panel-heading">
+        <h3>收藏采购清单</h3>
+        <div class="panel-actions">
+          <button class="text-button" type="button" data-copy-favorite-shopping-list>复制</button>
+          <button class="text-button" type="button" data-open-favorite-grocery>去小象搜</button>
+        </div>
+      </div>
+      ${shoppingGroupsTemplate(displayGroups.map((group) => ({
+        ...group,
+        items: (group.items ?? []).slice(0, 12)
+      })))}
+    </section>
+  `;
+}
+
+function favoriteMealSection(meals) {
+  if (!meals.length) return "";
+
+  return `
+    <h3>常吃收藏</h3>
+    <div class="history-list">
+      ${meals
+        .map(
+          (meal) => `
+            <article class="history-item">
+              <div>
+                <strong>${escapeHtml(meal.title)}</strong>
+                <span>${escapeHtml(meal.typeLabel)} · ${escapeHtml(formatHistoryTime(meal.favoritedAt))}</span>
+              </div>
+              <small>${escapeHtml((meal.searchKeywords ?? []).slice(0, 3).join(" / "))}</small>
+              <div class="history-item-actions">
+                ${
+                  meal.canOpenRecipe
+                    ? `<button class="text-button" type="button" data-open-favorite-recipe="${escapeHtml(meal.id)}">打开菜谱</button>`
+                    : `<span>已作为偏好参考</span>`
+                }
+              </div>
+            </article>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function historyInsightSection(insights = []) {
+  if (!insights.length) return "";
+
+  return `
+    <h3>近况洞察</h3>
+    <div class="history-insight-grid">
+      ${insights
+        .map(
+          (insight) => `
+            <article class="history-insight tone-${escapeHtml(insight.tone)}">
+              <span>${escapeHtml(insight.label)}</span>
+              <strong>${escapeHtml(insight.value)}</strong>
+            </article>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function historyMealList(meals, timeKey = "displayedAt") {
   if (!meals.length) return `<p class="empty-state compact">还没有选择记录。</p>`;
 
   return `
@@ -1009,15 +1807,21 @@ function historyMealList(meals) {
             <article class="history-item">
               <div>
                 <strong>${escapeHtml(meal.title)}</strong>
-                <span>${escapeHtml(meal.typeLabel)} · ${escapeHtml(formatHistoryTime(meal.selectedAt))}</span>
+                <span>${escapeHtml(meal.typeLabel)} · ${escapeHtml(formatHistoryTime(meal[timeKey] ?? meal.selectedAt ?? meal.favoritedAt))}</span>
               </div>
-              <small>${escapeHtml((meal.searchKeywords ?? []).slice(0, 3).join(" / "))}</small>
+              <small>${escapeHtml(historyMealMeta(meal))}</small>
             </article>
           `
         )
         .join("")}
     </div>
   `;
+}
+
+function historyMealMeta(meal) {
+  const keywords = (meal.searchKeywords ?? []).slice(0, 3).join(" / ");
+  const cost = meal.costText ?? (meal.estimatedCostPerPerson ? `约¥${meal.estimatedCostPerPerson}/人` : "");
+  return [meal.statusText, keywords, cost].filter(Boolean).join(" · ");
 }
 
 function historyChipSection(label, values) {
@@ -1047,6 +1851,8 @@ function showToast(message) {
 async function refreshOne(type, currentId) {
   if (state.isGenerating) return;
 
+  const hadRemoteDecision = Boolean(state.decisionId);
+
   if (state.decisionId) {
     try {
       const decision = await refreshDecisionCard({
@@ -1060,13 +1866,21 @@ async function refreshOne(type, currentId) {
       persist();
       render();
       return;
-    } catch {
+    } catch (error) {
+      if (!isRecoverableApiFailure(error)) {
+        showToast("换菜请求无效,已保留当前方案");
+        return;
+      }
       showToast("后端换菜失败,已用本地方案");
     }
   }
 
   const next = refreshCard(type, state.context.mood, currentId);
-  state.cards = state.cards.map((card) => (card.id === currentId ? next : card));
+  replaceDecisionCardState(state, currentId, next);
+  markLocalDecisionState(
+    state,
+    hadRemoteDecision ? "后端换菜失败,已使用本地换菜方案" : "已使用本地换菜方案"
+  );
   persist();
   render();
 }
@@ -1074,7 +1888,10 @@ async function refreshOne(type, currentId) {
 function refreshAll() {
   if (state.isGenerating) return;
 
-  state.cards = state.cards.map((card) => refreshCard(card.type, state.context.mood, card.id));
+  [...state.cards].forEach((card) =>
+    replaceDecisionCardState(state, card.id, refreshCard(card.type, state.context.mood, card.id))
+  );
+  markLocalDecisionState(state, "已使用本地批量换菜方案");
   persist();
   render();
 }
@@ -1114,6 +1931,10 @@ function warningIcon() {
   return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21.7 18.4-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21.4h16a2 2 0 0 0 1.7-3z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>`;
 }
 
+function retryIcon() {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15.1-6.6L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-15.1 6.6L3 16"></path><path d="M3 21v-5h5"></path></svg>`;
+}
+
 function updateDraftField(field, value) {
   state.draftProfile = state.draftProfile ?? createDraftProfile(state.profile);
   state.draftProfile[field] = value;
@@ -1138,7 +1959,7 @@ function finishOnboarding() {
   state.onboardingStep = 0;
   state.draftProfile = null;
   persist();
-  saveProfile(state.userId, state.profile).catch(() => showToast("画像已本地保存,后端稍后同步"));
+  syncProfile();
   showToast("画像已保存,正在生成");
   regenerateDecision("profile");
 }
@@ -1154,7 +1975,7 @@ function commitSettingsDraft({ regenerate = false } = {}) {
   state.profile = profileFromDraft(state.draftProfile ?? createDraftProfile(state.profile));
   state.profileCompleted = true;
   persist();
-  saveProfile(state.userId, state.profile).catch(() => showToast("设置已本地保存,后端稍后同步"));
+  syncProfile("设置已本地保存,后端稍后同步");
   if (regenerate) {
     showToast("设置已保存,正在重新生成");
     regenerateDecision("profile");
@@ -1208,12 +2029,15 @@ function clearLocalData() {
   clearState(stateKey);
   state.profile = defaultProfile;
   state.profileCompleted = false;
+  state.profileSyncPending = false;
+  state.memorySyncPending = false;
   state.draftProfile = createDraftProfile(defaultProfile);
   state.view = "onboarding";
   state.onboardingStep = 0;
   state.settingsPicker = null;
   state.clearDataArmed = false;
   state.recentMeals = [];
+  state.favoriteMeals = [];
   state.feedback = [];
   state.feedbackLearning = null;
   persist();
@@ -1233,8 +2057,18 @@ elements.moodButtons.forEach((button) => {
 
 elements.decisionList.addEventListener("click", (event) => {
   const actionButton = event.target.closest("[data-action]");
+  const budgetSwapButton = event.target.closest("[data-budget-swap]");
   const refreshButton = event.target.closest("[data-refresh]");
   const copyCardButton = event.target.closest("[data-copy-card-keywords]");
+
+  if (budgetSwapButton) {
+    if (state.isGenerating) return;
+    const card = getCard(budgetSwapButton.dataset.budgetSwap);
+    if (!card) return;
+    selectCard(card);
+    showToast("已改选更省钱方案");
+    return;
+  }
 
   if (actionButton) {
     if (state.isGenerating) return;
@@ -1251,13 +2085,24 @@ elements.decisionList.addEventListener("click", (event) => {
 
   if (copyCardButton) {
     const card = getCard(copyCardButton.dataset.copyCardKeywords);
-    const plan = buildActionPlan(card, state.profile);
+    const plan = buildActionPlan(card, state.profile, recommendationContext());
     copyText(plan.searchText);
     showToast("关键词已复制");
   }
 });
 
 elements.topRecommendation.addEventListener("click", (event) => {
+  const tuningButton = event.target.closest("[data-profile-tuning]");
+  if (tuningButton) {
+    state.profile = applyProfileTuningAction(state.profile, tuningButton.dataset.profileTuning);
+    state.profileCompleted = true;
+    persist();
+    syncProfile();
+    render();
+    showToast("已写入画像,推荐会更贴近你");
+    return;
+  }
+
   const button = event.target.closest("[data-primary]");
   if (!button) return;
   if (state.isGenerating) return;
@@ -1271,8 +2116,19 @@ elements.refreshAllButton.addEventListener("click", refreshAll);
 elements.historyButton.addEventListener("click", openHistory);
 
 elements.onboardingScreen.addEventListener("click", (event) => {
+  const preset = event.target.closest("[data-profile-preset]");
   const option = event.target.closest("[data-onboarding-field]");
   const taboo = event.target.closest("[data-onboarding-taboo]");
+  if (preset) {
+    state.draftProfile = {
+      ...applyProfilePreset(state.draftProfile ?? createDraftProfile(state.profile), preset.dataset.profilePreset),
+      presetId: preset.dataset.profilePreset
+    };
+    persist();
+    render();
+    showToast("已套用快捷画像,可以继续微调");
+    return;
+  }
   if (event.target.closest("[data-onboarding-back]")) {
     goOnboardingBack();
     return;
@@ -1353,11 +2209,19 @@ elements.settingsScreen.addEventListener("click", (event) => {
 });
 
 elements.recipeScreen.addEventListener("click", (event) => {
-  const card = getCard(state.selectedRecipeId);
+  const card = getRecipeCard(state.selectedRecipeId, { preferFavorite: state.selectedRecipeSource === "favorite" });
   const ingredient = event.target.closest("[data-ingredient-id]");
   const step = event.target.closest("[data-step-index]");
   if (event.target.closest("[data-recipe-back]")) {
     setView("today");
+    return;
+  }
+  if (event.target.closest("[data-toggle-favorite]") && card) {
+    const active = toggleFavoriteMeal(state, card);
+    persist();
+    syncMemory();
+    render();
+    showToast(active ? "已加入常吃收藏" : "已取消收藏");
     return;
   }
   if (ingredient && card) {
@@ -1385,52 +2249,108 @@ elements.recipeScreen.addEventListener("click", (event) => {
     return;
   }
   if (event.target.closest("[data-recipe-grocery]") && card) {
-    window.open(buildSearchUrl("xiaoxiang", card.searchKeywords), "_blank", "noopener,noreferrer");
+    openActionPlan(card);
     return;
   }
   if (event.target.closest("[data-recipe-done]") && card) {
-    showFeedback(card.id);
+    completeRecipe(card);
   }
 });
 
 document.body.addEventListener("click", (event) => {
+  if (event.target.closest("[data-retry-generation]")) {
+    regenerateDecision("retry");
+    return;
+  }
+
   const closeButton = event.target.closest("[data-close]");
+  const openFavoriteRecipeButton = event.target.closest("[data-open-favorite-recipe]");
+  const copyFavoriteShoppingListButton = event.target.closest("[data-copy-favorite-shopping-list]");
+  const openFavoriteGroceryButton = event.target.closest("[data-open-favorite-grocery]");
   const feedbackButton = event.target.closest("[data-feedback]");
   const feedbackTag = event.target.closest("[data-feedback-tag]");
+  const quickFeedbackTag = event.target.closest("[data-quick-feedback-tag]");
+  const feedbackProfileAction = event.target.closest("[data-feedback-profile-action]");
+  const nextMealButton = event.target.closest("[data-next-meal-card]");
   const copyKeywordsButton = event.target.closest("[data-copy-keywords]");
+  const copyShoppingPlanButton = event.target.closest("[data-copy-shopping-plan]");
 
   if (closeButton) closeSheet(closeButton.dataset.close);
+  if (nextMealButton) {
+    const card = getCard(nextMealButton.dataset.nextMealCard);
+    if (!card) return;
+    const actionContext = {
+      source: "next_meal",
+      label: nextMealButton.dataset.nextMealLabel ?? "下一餐建议",
+      reasons: (nextMealButton.dataset.nextMealReasons ?? "").split("|").filter(Boolean)
+    };
+    selectCard(card, actionContext);
+    showToast("已按下一餐建议选择");
+    return;
+  }
+  if (feedbackProfileAction) {
+    state.profile = applyProfileTuningAction(state.profile, feedbackProfileAction.dataset.feedbackProfileAction);
+    state.profileCompleted = true;
+    persist();
+    syncProfile();
+    render();
+    showToast("已写入画像,下次推荐会更准");
+    return;
+  }
+  if (copyFavoriteShoppingListButton) {
+    const list = buildAggregatedShoppingList(state.favoriteMeals, state.profile, favoriteShoppingOptions());
+    if (!list.length) {
+      showToast("收藏菜谱的食材已确认齐了");
+      return;
+    }
+    copyText(list.join("\n"));
+    showToast("收藏采购清单已复制");
+    return;
+  }
+  if (openFavoriteGroceryButton) {
+    const list = buildAggregatedShoppingList(state.favoriteMeals, state.profile, favoriteShoppingOptions());
+    if (!list.length) {
+      showToast("收藏菜谱暂时不用补货");
+      return;
+    }
+    window.open(buildSearchUrl("xiaoxiang", list), "_blank", "noopener,noreferrer");
+    return;
+  }
+  if (openFavoriteRecipeButton) {
+    const card = getRecipeCard(openFavoriteRecipeButton.dataset.openFavoriteRecipe, { preferFavorite: true });
+    if (!card || !favoriteHasRecipeDetails(card)) {
+      showToast("这道收藏暂时没有菜谱详情");
+      return;
+    }
+    closeSheet("historySheet");
+    openRecipe(card, "favorite");
+    return;
+  }
   if (copyKeywordsButton) {
-    const card = getCard(copyKeywordsButton.dataset.copyKeywords);
-    const plan = buildActionPlan(card, state.profile);
+    const card = getActionCard(copyKeywordsButton.dataset.copyKeywords);
+    if (!card) return;
+    const plan = buildActionPlan(card, state.profile, actionPlanContext(card));
     copyText(plan.searchText);
     showToast("搜索词已复制");
   }
+  if (copyShoppingPlanButton) {
+    const card = getActionCard(copyShoppingPlanButton.dataset.copyShoppingPlan);
+    if (!card) return;
+    const plan = buildActionPlan(card, state.profile, actionPlanContext(card));
+    if (!plan.shoppingList.length) {
+      showToast("已确认食材都在家里,暂时不用采购");
+      return;
+    }
+    copyText(plan.shoppingList.join("\n"));
+    showToast("采购清单已复制");
+  }
   if (feedbackButton) showFeedback(feedbackButton.dataset.feedback);
+  if (quickFeedbackTag) {
+    applyMealFeedback(quickFeedbackTag.dataset.cardId, quickFeedbackTag.dataset.quickFeedbackTag);
+    return;
+  }
   if (feedbackTag) {
-    const card = getCard(feedbackTag.dataset.cardId);
-    const feedback = {
-      cardId: feedbackTag.dataset.cardId,
-      tag: feedbackTag.dataset.feedbackTag,
-      createdAt: new Date().toISOString()
-    };
-    state.feedback.push(feedback);
-    if (card) {
-      recordFeedbackLearning(state, card, feedback.tag, feedback.createdAt);
-    }
-    persist();
-    syncMemory();
-    if (state.decisionId) {
-      submitFeedback({
-        decisionId: state.decisionId,
-        userId: state.userId,
-        cardId: feedback.cardId,
-        tag: feedback.tag
-      }).catch(() => showToast("反馈已本地记录,后端稍后同步"));
-    }
-    closeSheet("feedbackSheet");
-    showToast("反馈已记录,正在更新推荐");
-    regenerateDecision("feedback");
+    applyMealFeedback(feedbackTag.dataset.cardId, feedbackTag.dataset.feedbackTag, { closeSheet: "feedbackSheet" });
   }
 });
 
@@ -1438,3 +2358,4 @@ elements.settingsButton.addEventListener("click", openSettingsPage);
 
 render();
 initializeFromBackend();
+registerServiceWorker();

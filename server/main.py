@@ -46,6 +46,8 @@ class FeedbackRequest(BaseModel):
     userId: str = "local-user"
     cardId: str
     tag: str
+    createdAt: str | None = None
+    mealSelectedAt: str | None = None
 
 
 def create_app(database=None):
@@ -59,13 +61,16 @@ def create_app(database=None):
 
     @app.get("/api/profile/{user_id}")
     def get_profile(user_id: str):
-        return {"userId": user_id, "profile": db.get_profile(user_id) or DEFAULT_PROFILE}
+        profile = db.get_profile(user_id)
+        if profile is not None:
+            return {"userId": user_id, "profile": profile, "profileSource": "stored"}
+        return {"userId": user_id, "profile": DEFAULT_PROFILE, "profileSource": "default"}
 
     @app.post("/api/profile/{user_id}")
     def save_profile(user_id: str, request: ProfileRequest):
         profile = request.profile or DEFAULT_PROFILE
         db.save_profile(user_id, profile)
-        return {"userId": user_id, "profile": profile}
+        return {"userId": user_id, "profile": profile, "profileSource": "stored"}
 
     @app.get("/api/memory/{user_id}")
     def get_memory(user_id: str):
@@ -90,6 +95,14 @@ def create_app(database=None):
         decision = db.get_decision(decision_id)
         if not decision:
             raise HTTPException(status_code=404, detail="Decision not found")
+        if request.type not in {"cook", "takeout", "dine_out"}:
+            raise HTTPException(status_code=400, detail="Unsupported card type")
+
+        current_card = next((card for card in decision.get("cards", []) if card.get("id") == request.currentId), None)
+        if not current_card:
+            raise HTTPException(status_code=404, detail="Card not found")
+        if current_card.get("type") != request.type:
+            raise HTTPException(status_code=400, detail="Refresh type does not match card")
 
         next_card = refresh_card(request.type, request.mood, request.currentId)
         decision["cards"] = [
@@ -100,14 +113,27 @@ def create_app(database=None):
 
     @app.post("/api/decision/select")
     def select_decision(request: SelectRequest):
-        decision = db.select_card(request.decisionId, request.cardId)
+        decision = db.get_decision(request.decisionId)
         if not decision:
             raise HTTPException(status_code=404, detail="Decision not found")
-        return decision
+        card_ids = {card.get("id") for card in decision.get("cards", []) if isinstance(card, dict)}
+        if request.cardId not in card_ids:
+            raise HTTPException(status_code=404, detail="Card not found")
+        selected = db.select_card(request.decisionId, request.cardId)
+        if not selected:
+            raise HTTPException(status_code=404, detail="Decision not found")
+        return selected
 
     @app.post("/api/feedback")
     def feedback(request: FeedbackRequest):
-        return db.save_feedback(request.decisionId, request.userId, request.cardId, request.tag)
+        return db.save_feedback(
+            request.decisionId,
+            request.userId,
+            request.cardId,
+            request.tag,
+            created_at=request.createdAt,
+            meal_selected_at=request.mealSelectedAt,
+        )
 
     app.mount("/src", StaticFiles(directory=ROOT_DIR / "src"), name="src")
     app.mount("/assets", StaticFiles(directory=ROOT_DIR / "assets"), name="assets")
@@ -121,7 +147,12 @@ def create_app(database=None):
     def manifest():
         return FileResponse(ROOT_DIR / "manifest.webmanifest")
 
+    @app.get("/sw.js")
+    def service_worker():
+        return FileResponse(ROOT_DIR / "sw.js", media_type="application/javascript")
+
     @app.get("/")
+    @app.get("/index.html")
     def index():
         return FileResponse(ROOT_DIR / "index.html")
 
@@ -132,12 +163,19 @@ app = create_app()
 
 
 def default_memory():
-    return {"recentMeals": [], "feedbackLearning": None, "feedback": []}
+    return {"recentMeals": [], "favoriteMeals": [], "feedbackLearning": None, "feedback": []}
 
 
 def normalize_memory(memory):
+    source = memory if isinstance(memory, dict) else {}
     return {
-        "recentMeals": memory.get("recentMeals", []) if isinstance(memory, dict) else [],
-        "feedbackLearning": memory.get("feedbackLearning") if isinstance(memory, dict) else None,
-        "feedback": memory.get("feedback", []) if isinstance(memory, dict) else [],
+        "recentMeals": list_field(source, "recentMeals"),
+        "favoriteMeals": list_field(source, "favoriteMeals"),
+        "feedbackLearning": source.get("feedbackLearning"),
+        "feedback": list_field(source, "feedback"),
     }
+
+
+def list_field(source, key):
+    value = source.get(key, [])
+    return value if isinstance(value, list) else []
