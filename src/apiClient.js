@@ -113,3 +113,16 @@ export function submitFeedback({ decisionId, userId, cardId, tag, createdAt, mea
     fetchImpl
   );
 }
+
+export function trackEvent({ userId, event, payload = {}, createdAt }, fetchImpl) {
+  return postJson(
+    "/api/events",
+    {
+      userId,
+      event,
+      payload,
+      ...(createdAt ? { createdAt } : {})
+    },
+    fetchImpl
+  );
+}

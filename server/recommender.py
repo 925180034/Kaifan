@@ -14,6 +14,7 @@ OPTION_POOLS = {
 
 
 def score_card(card, context):
+    context = context or {}
     score = card.get("baseScore", 0)
     mood = context.get("mood", "normal")
     weather = context.get("weather", {})
@@ -40,6 +41,9 @@ def score_card(card, context):
         if card.get("complexity") == "rich":
             score += 10
 
+    score += feedback_learning_score(card, context.get("feedbackLearning"))
+    score += recent_meal_score(card, context.get("recentMeals", []))
+
     return score
 
 
@@ -52,7 +56,109 @@ def rank_cards(cards, context):
     return sorted(scored, key=lambda card: (-card["score"], card.get("estimatedCostPerPerson", 0)))
 
 
-def refresh_card(card_type, mood="normal", current_id=None):
+def feedback_learning_score(card, feedback_learning):
+    if not isinstance(feedback_learning, dict):
+        return 0
+
+    liked_terms = useful_terms(feedback_learning.get("likedKeywords", []))
+    avoided_terms = useful_terms(feedback_learning.get("avoidedKeywords", []))
+    score = 0
+
+    liked_matches = matching_terms(card, liked_terms)
+    if liked_matches:
+        score += min(24, 18 + 4 * (len(liked_matches) - 1))
+
+    avoided_matches = matching_terms(card, avoided_terms)
+    if avoided_matches:
+        score -= min(54, 22 * len(avoided_matches))
+
+    constraints = " ".join(as_list(feedback_learning.get("constraints", [])))
+    if "少油少盐" in constraints and card.get("type") != "dine_out":
+        if matching_terms(card, ["清淡", "少油", "轻食"]):
+            score += 8
+        if matching_terms(card, ["麻辣", "炸", "重口", "牛腩"]):
+            score -= 12
+    if "控制预算" in constraints and number_or_zero(card.get("estimatedCostPerPerson")) <= 35:
+        score += 10
+    if "优先简单省事" in constraints and number_or_zero(card.get("estimatedMinutes")) <= 30:
+        score += 10
+    if "提高满足感" in constraints and matching_terms(card, ["蛋白", "主食", "米饭", "牛肉", "鸡胸", "虾仁"]):
+        score += 8
+
+    return score
+
+
+def recent_meal_score(card, recent_meals):
+    if not isinstance(recent_meals, list):
+        return 0
+
+    score = 0
+    card_id = str(card.get("id", ""))
+    for index, meal in enumerate(recent_meals[:5]):
+        if not isinstance(meal, dict):
+            continue
+        recency_weight = max(1, 5 - index)
+        if card_id and card_id == str(meal.get("id", "")):
+            score -= 26 + recency_weight * 2
+            continue
+
+        meal_terms = useful_terms([meal.get("title"), *as_list(meal.get("searchKeywords", []))])
+        overlap = matching_terms(card, meal_terms)
+        if overlap:
+            score -= min(26, 7 * len(overlap) + recency_weight)
+
+    return score
+
+
+def matching_terms(card, terms):
+    text = card_text(card)
+    return [term for term in terms if term and term in text]
+
+
+def card_text(card):
+    values = [
+        card.get("id"),
+        card.get("title"),
+        card.get("subtitle"),
+        card.get("reason"),
+        *as_list(card.get("searchKeywords", [])),
+    ]
+    values.extend(ingredient.get("name") for ingredient in card.get("ingredients", []) if isinstance(ingredient, dict))
+    return " ".join(str(value or "").lower() for value in values)
+
+
+def useful_terms(values):
+    ignored = {"附近", "高评分", "双人", "人均100以内", "不排队"}
+    terms = []
+    seen = set()
+    for value in as_list(values):
+        for part in re.split(r"[、,，/\s]+", str(value or "")):
+            term = part.strip().lower()
+            if len(term) < 2 or term in ignored or term in seen:
+                continue
+            seen.add(term)
+            terms.append(term)
+    return terms
+
+
+def as_list(value):
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def number_or_zero(value):
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return value
+    match = re.search(r"\d+", str(value or ""))
+    return int(match.group(0)) if match else 0
+
+
+def refresh_card(card_type, mood="normal", current_id=None, context=None):
     pool = OPTION_POOLS.get(card_type, [])
     preferred = []
     for option in pool:
@@ -63,7 +169,10 @@ def refresh_card(card_type, mood="normal", current_id=None):
         if card_type == "cook" and mood == "treat" and option.get("complexity") == "easy":
             continue
         preferred.append(option)
-    return deepcopy((preferred or [option for option in pool if option["id"] != current_id] or pool)[0])
+    candidates = preferred or [option for option in pool if option["id"] != current_id] or pool
+    ranking_context = {**(context or {}), "mood": mood}
+    ranked = rank_cards(candidates, ranking_context)
+    return deepcopy(ranked[0])
 
 
 def build_decision(profile, context, cards=None, llm_client=None):

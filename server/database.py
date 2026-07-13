@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -59,6 +60,23 @@ class Database:
                     client_created_at TEXT,
                     meal_selected_at TEXT,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS event_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    event_name TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    client_created_at TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS recipe_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    card_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
                 """
             )
@@ -193,3 +211,75 @@ class Database:
         if meal_selected_at:
             feedback["mealSelectedAt"] = meal_selected_at
         return feedback
+
+    def save_event(self, user_id, event_name, payload=None, created_at=None):
+        normalized_payload = payload if isinstance(payload, dict) else {}
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO event_log (user_id, event_name, payload_json, client_created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (user_id, event_name, json.dumps(normalized_payload, ensure_ascii=False), created_at),
+            )
+            event_id = cursor.lastrowid
+        event = {
+            "id": event_id,
+            "userId": user_id,
+            "event": event_name,
+            "payload": normalized_payload,
+        }
+        if created_at:
+            event["createdAt"] = created_at
+        return event
+
+    def save_recipe_cache(self, card):
+        cache_key = recipe_cache_key(card)
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO recipe_cache (cache_key, title, card_json, updated_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(cache_key) DO UPDATE SET
+                    title = excluded.title,
+                    card_json = excluded.card_json,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (cache_key, str(card.get("title", "")), json.dumps(card, ensure_ascii=False)),
+            )
+        return {"cacheKey": cache_key, "card": card}
+
+    def get_recipe_cache(self, card):
+        cache_key = recipe_cache_key(card)
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT card_json FROM recipe_cache WHERE cache_key = ?",
+                (cache_key,),
+            ).fetchone()
+        return json.loads(row["card_json"]) if row else None
+
+
+def recipe_cache_key(card):
+    title = normalize_recipe_key_part(card.get("title", ""))
+    source_terms = list_values(card.get("searchKeywords", []))
+    if not source_terms:
+        source_terms = [item.get("name") for item in card.get("ingredients", []) if isinstance(item, dict)]
+
+    terms = []
+    for value in source_terms:
+        term = normalize_recipe_key_part(value)
+        if len(term) >= 2 and term not in terms:
+            terms.append(term)
+    return "|".join([title, *terms[:4]])
+
+
+def normalize_recipe_key_part(value):
+    return re.sub(r"\s+", "", str(value or "").strip().lower())
+
+
+def list_values(value):
+    if isinstance(value, list):
+        return value
+    if value is None:
+        return []
+    return [value]

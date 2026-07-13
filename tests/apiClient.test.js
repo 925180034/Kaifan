@@ -10,7 +10,8 @@ import {
   saveMemory,
   saveProfile,
   selectDecisionCard,
-  submitFeedback
+  submitFeedback,
+  trackEvent
 } from "../src/apiClient.js";
 
 function createFetchRecorder(responseBody = { ok: true }) {
@@ -140,6 +141,28 @@ test("memory helpers call matching backend endpoints", async () => {
   assert.equal(calls[0].options.method, "GET");
   assert.equal(calls[1].url, "/api/memory/user-1");
   assert.equal(JSON.parse(calls[1].options.body).memory.recentMeals[0].id, "cook-1");
+});
+
+test("trackEvent posts analytics events to the backend", async () => {
+  const { calls, fetchImpl } = createFetchRecorder({ event: "card_selected" });
+
+  await trackEvent(
+    {
+      userId: "user-1",
+      event: "card_selected",
+      payload: { cardId: "cook-1", source: "today" },
+      createdAt: "2026-07-13T20:00:00.000Z"
+    },
+    fetchImpl
+  );
+
+  assert.equal(calls[0].url, "/api/events");
+  assert.deepEqual(JSON.parse(calls[0].options.body), {
+    userId: "user-1",
+    event: "card_selected",
+    payload: { cardId: "cook-1", source: "today" },
+    createdAt: "2026-07-13T20:00:00.000Z"
+  });
 });
 
 test("decision mutations call their matching backend endpoints", async () => {

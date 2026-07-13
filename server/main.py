@@ -22,6 +22,13 @@ class MemoryRequest(BaseModel):
     memory: dict = Field(default_factory=dict)
 
 
+class EventRequest(BaseModel):
+    userId: str = "local-user"
+    event: str
+    payload: dict = Field(default_factory=dict)
+    createdAt: str | None = None
+
+
 class DecisionRequest(BaseModel):
     userId: str = "local-user"
     profile: dict = Field(default_factory=lambda: DEFAULT_PROFILE.copy())
@@ -50,9 +57,9 @@ class FeedbackRequest(BaseModel):
     mealSelectedAt: str | None = None
 
 
-def create_app(database=None):
+def create_app(database=None, llm_client=None):
     db = database or Database()
-    llm_client = DeepSeekClient.from_env()
+    llm_client = llm_client or DeepSeekClient.from_env()
     app = FastAPI(title="Kaifan Dinner Decision Assistant")
 
     @app.get("/api/health")
@@ -88,6 +95,7 @@ def create_app(database=None):
         context = request.context or DEFAULT_CONTEXT
         db.save_profile(request.userId, profile)
         decision = build_decision(profile, context, llm_client=llm_client)
+        apply_recipe_cache(db, decision)
         return db.save_decision(request.userId, decision)
 
     @app.post("/api/decision/{decision_id}/refresh")
@@ -104,7 +112,8 @@ def create_app(database=None):
         if current_card.get("type") != request.type:
             raise HTTPException(status_code=400, detail="Refresh type does not match card")
 
-        next_card = refresh_card(request.type, request.mood, request.currentId)
+        refresh_context = {**(decision.get("context") or {}), "mood": request.mood}
+        next_card = refresh_card(request.type, request.mood, request.currentId, context=refresh_context)
         decision["cards"] = [
             next_card if card["id"] == request.currentId else card for card in decision["cards"]
         ]
@@ -135,6 +144,15 @@ def create_app(database=None):
             meal_selected_at=request.mealSelectedAt,
         )
 
+    @app.post("/api/events")
+    def save_event(request: EventRequest):
+        return db.save_event(
+            request.userId,
+            request.event,
+            request.payload,
+            created_at=request.createdAt,
+        )
+
     app.mount("/src", StaticFiles(directory=ROOT_DIR / "src"), name="src")
     app.mount("/assets", StaticFiles(directory=ROOT_DIR / "assets"), name="assets")
     app.mount("/docs", StaticFiles(directory=ROOT_DIR / "docs"), name="docs")
@@ -160,6 +178,59 @@ def create_app(database=None):
 
 
 app = create_app()
+
+
+def apply_recipe_cache(db, decision):
+    if decision.get("generationSource") != "llm":
+        return decision
+
+    cache_status = "none"
+    next_cards = []
+    for card in decision.get("cards", []):
+        if card.get("type") != "cook":
+            next_cards.append(card)
+            continue
+
+        cached = db.get_recipe_cache(card)
+        if cached:
+            card = merge_cached_recipe_card(card, cached)
+            cache_status = "hit"
+        else:
+            db.save_recipe_cache(card)
+            cache_status = "miss"
+        next_cards.append(card)
+
+    decision["cards"] = next_cards
+    if cache_status != "none":
+        decision["recipeCacheStatus"] = cache_status
+
+    top_id = decision.get("topRecommendation", {}).get("id")
+    if top_id:
+        replacement = next((card for card in next_cards if card.get("id") == top_id), None)
+        if replacement:
+            score = decision.get("topRecommendation", {}).get("score")
+            decision["topRecommendation"] = {**replacement, **({"score": score} if score is not None else {})}
+
+    return decision
+
+
+def merge_cached_recipe_card(current, cached):
+    merged = {**current, **cached}
+    preserved_fields = [
+        "id",
+        "type",
+        "baseScore",
+        "accent",
+        "primaryAction",
+        "estimatedMinutes",
+        "estimatedCostPerPerson",
+        "costText",
+        "timeText",
+    ]
+    for field in preserved_fields:
+        if field in current:
+            merged[field] = current[field]
+    return merged
 
 
 def default_memory():

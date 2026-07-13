@@ -2,7 +2,7 @@ import {
   defaultDailyContext,
   defaultProfile,
   initialDecisionCards
-} from "./sampleData.js?v=20260713-action-loop";
+} from "./sampleData.js?v=20260713-learning-events-cache";
 import {
   applyDecisionState,
   applyMemoryState,
@@ -19,7 +19,7 @@ import {
   replaceDecisionCardState,
   selectDecisionCardState,
   startDecisionRequest
-} from "./appState.js?v=20260713-action-loop";
+} from "./appState.js?v=20260713-learning-events-cache";
 import {
   buildBudgetAlert,
   buildDecisionTradeoffs,
@@ -33,14 +33,14 @@ import {
   getTopRecommendation,
   rankDecisionCards,
   refreshCard
-} from "./decisionEngine.js?v=20260713-action-loop";
-import { buildSearchUrl } from "./platformLinks.js?v=20260713-action-loop";
+} from "./decisionEngine.js?v=20260713-learning-events-cache";
+import { buildSearchUrl } from "./platformLinks.js?v=20260713-learning-events-cache";
 import {
   applyProfilePreset,
   applyProfileTuningAction,
   buildProfileSummary,
   profilePresets
-} from "./profile.js?v=20260713-action-loop";
+} from "./profile.js?v=20260713-learning-events-cache";
 import {
   buildDailyReview,
   buildFeedbackProfileSuggestion,
@@ -52,29 +52,29 @@ import {
   recordMealFeedback,
   recordFeedbackLearning,
   recordSelectedMeal
-} from "./learning.js?v=20260713-action-loop";
-import { buildHistorySummary } from "./history.js?v=20260713-action-loop";
-import { clearState, loadState, saveState } from "./storage.js?v=20260713-action-loop";
-import { createLatestSync, createMemorySync } from "./memorySync.js?v=20260713-action-loop";
+} from "./learning.js?v=20260713-learning-events-cache";
+import { buildHistorySummary } from "./history.js?v=20260713-learning-events-cache";
+import { clearState, loadState, saveState } from "./storage.js?v=20260713-learning-events-cache";
+import { createLatestSync, createMemorySync } from "./memorySync.js?v=20260713-learning-events-cache";
 import {
   buildActionPlan,
   buildAggregatedShoppingGroups,
   buildAggregatedShoppingList,
   buildShoppingList,
   platformLabel
-} from "./actionPlan.js?v=20260713-action-loop";
+} from "./actionPlan.js?v=20260713-learning-events-cache";
 import {
   favoriteHasRecipeDetails,
   findRecipeCard,
   hydrateFavoriteRecipeDetails,
   isFavoriteMeal,
   toggleFavoriteMeal
-} from "./favorites.js?v=20260713-action-loop";
-import { buildPrepTimeline } from "./prepTimeline.js?v=20260713-action-loop";
-import { registerServiceWorker } from "./pwa.js?v=20260713-action-loop";
-import { escapeHtml } from "./html.js?v=20260713-action-loop";
-import { buildGenerationStatus } from "./generationStatus.js?v=20260713-action-loop";
-import { scaleIngredientsForPeople, servingLabel } from "./servings.js?v=20260713-action-loop";
+} from "./favorites.js?v=20260713-learning-events-cache";
+import { buildPrepTimeline } from "./prepTimeline.js?v=20260713-learning-events-cache";
+import { registerServiceWorker } from "./pwa.js?v=20260713-learning-events-cache";
+import { escapeHtml } from "./html.js?v=20260713-learning-events-cache";
+import { buildGenerationStatus } from "./generationStatus.js?v=20260713-learning-events-cache";
+import { scaleIngredientsForPeople, servingLabel } from "./servings.js?v=20260713-learning-events-cache";
 import {
   fetchMemory,
   fetchProfile,
@@ -84,8 +84,9 @@ import {
   saveMemory,
   saveProfile,
   selectDecisionCard,
-  submitFeedback
-} from "./apiClient.js?v=20260713-action-loop";
+  submitFeedback,
+  trackEvent
+} from "./apiClient.js?v=20260713-learning-events-cache";
 
 const stateKey = "kaifan.mvp.state";
 
@@ -260,6 +261,15 @@ function persist() {
   saveState(stateKey, state);
 }
 
+function track(event, payload = {}) {
+  trackEvent({
+    userId: state.userId,
+    event,
+    payload,
+    createdAt: new Date().toISOString()
+  }).catch(() => {});
+}
+
 function applyDecision(decision) {
   applyDecisionState(state, decision, cloneCards);
   if (hydrateFavoriteRecipeDetails(state, state.cards)) {
@@ -270,6 +280,7 @@ function applyDecision(decision) {
 async function initializeFromBackend() {
   await hydrateUserState();
   if (!isProfileReady()) {
+    track("onboarding_started", { source: "cold_start" });
     state.view = "onboarding";
     state.draftProfile = state.draftProfile ?? createDraftProfile(state.profile);
     persist();
@@ -320,6 +331,7 @@ async function hydrateMemory() {
 }
 
 async function regenerateDecision(reason = "manual") {
+  const startedAt = performance.now();
   const requestId = startDecisionRequest(state);
   persist();
   render();
@@ -334,6 +346,13 @@ async function regenerateDecision(reason = "manual") {
     if (!applied) return;
     persist();
     render();
+    track("decision_generated", {
+      reason,
+      generationSource: state.generationSource || "unknown",
+      fallbackReason: state.fallbackReason || "",
+      cardCount: state.cards.length,
+      durationMs: Math.round(performance.now() - startedAt)
+    });
     if (reason !== "initial") {
       showToast("已按你的画像重新生成");
     }
@@ -342,6 +361,12 @@ async function regenerateDecision(reason = "manual") {
     if (!failed) return;
     persist();
     render();
+    track("decision_generation_failed", {
+      reason,
+      error: state.generationError || "生成暂时失败",
+      cardCount: state.cards.length,
+      durationMs: Math.round(performance.now() - startedAt)
+    });
     showToast("生成暂时失败,已保留本地方案");
   }
 }
@@ -1275,6 +1300,13 @@ function selectCard(card, actionContext = null) {
   persist();
   syncMemory();
   render();
+  track("card_selected", {
+    decisionId: state.decisionId || "local",
+    cardId: card.id,
+    type: card.type,
+    source: actionContext?.source || "today",
+    generationSource: state.generationSource || "unknown"
+  });
   if (state.decisionId) {
     selectDecisionCard({
       decisionId: state.decisionId,
@@ -1489,11 +1521,17 @@ function completeActionPlan(card) {
   persist();
   syncMemory();
   render();
+  track("fulfillment_completed", { cardId: card.id, type: card.type });
   showFeedback(card.id);
   showToast(actionCompletionToast(card));
 }
 
 function openActionPlan(card) {
+  track("fulfillment_opened", {
+    cardId: card.id,
+    type: card.type,
+    action: card.primaryAction?.action || ""
+  });
   const ownedIngredientNames = ownedIngredientNamesForCard(card);
   const plan = buildActionPlan(card, state.profile, actionPlanContext(card));
   elements.actionContent.innerHTML = `
@@ -1508,7 +1546,7 @@ function openActionPlan(card) {
       ${plan.actions
         .map(
           (action) => `
-            <a class="platform-action" href="${escapeHtml(action.url)}" target="_blank" rel="noopener noreferrer">
+            <a class="platform-action" href="${escapeHtml(action.url)}" target="_blank" rel="noopener noreferrer" data-platform-link="${escapeHtml(action.platform)}" data-card-id="${escapeHtml(card.id)}">
               <strong>${escapeHtml(action.label)}</strong>
               <span>${escapeHtml(platformLabel(action.platform))} · ${escapeHtml(action.helper)}</span>
             </a>
@@ -1670,6 +1708,11 @@ function applyMealFeedback(cardId, tag, options = {}) {
   if (card) {
     recordFeedbackLearning(state, card, feedback.tag, feedback.createdAt);
   }
+  track("feedback_submitted", {
+    cardId: feedback.cardId,
+    tag: feedback.tag,
+    mealSelectedAt: feedback.mealSelectedAt || ""
+  });
   state.view = "today";
   state.selectedRecipeId = null;
   state.selectedRecipeSource = "current";
@@ -1986,6 +2029,11 @@ function finishOnboarding() {
   state.draftProfile = null;
   persist();
   syncProfile();
+  track("onboarding_completed", {
+    peopleCount: state.profile.peopleCount,
+    budgetPerPerson: state.profile.budgetPerPerson,
+    cookingWillingness: state.profile.cookingWillingness
+  });
   showToast("画像已保存,正在生成");
   regenerateDecision("profile");
 }
@@ -2298,6 +2346,7 @@ document.body.addEventListener("click", (event) => {
   const quickFeedbackTag = event.target.closest("[data-quick-feedback-tag]");
   const feedbackProfileAction = event.target.closest("[data-feedback-profile-action]");
   const nextMealButton = event.target.closest("[data-next-meal-card]");
+  const platformLink = event.target.closest("[data-platform-link]");
   const completeActionButton = event.target.closest("[data-complete-action]");
   const copyKeywordsButton = event.target.closest("[data-copy-keywords]");
   const copyShoppingPlanButton = event.target.closest("[data-copy-shopping-plan]");
@@ -2314,6 +2363,13 @@ document.body.addEventListener("click", (event) => {
     selectCard(card, actionContext);
     showToast("已按下一餐建议选择");
     return;
+  }
+  if (platformLink) {
+    track("platform_link_clicked", {
+      platform: platformLink.dataset.platformLink,
+      cardId: platformLink.dataset.cardId || "",
+      status: "opened"
+    });
   }
   if (feedbackProfileAction) {
     state.profile = applyProfileTuningAction(state.profile, feedbackProfileAction.dataset.feedbackProfileAction);
@@ -2340,6 +2396,7 @@ document.body.addEventListener("click", (event) => {
       showToast("收藏菜谱暂时不用补货");
       return;
     }
+    track("platform_link_clicked", { platform: "xiaoxiang", source: "favorite", status: "opened" });
     window.open(buildSearchUrl("xiaoxiang", list), "_blank", "noopener,noreferrer");
     return;
   }
@@ -2363,6 +2420,11 @@ document.body.addEventListener("click", (event) => {
     const card = getActionCard(copyKeywordsButton.dataset.copyKeywords);
     if (!card) return;
     const plan = buildActionPlan(card, state.profile, actionPlanContext(card));
+    track("platform_link_clicked", {
+      cardId: card.id,
+      type: card.type,
+      status: "fallback_copy_keywords"
+    });
     copyText(plan.searchText);
     showToast("搜索词已复制");
   }
@@ -2374,6 +2436,11 @@ document.body.addEventListener("click", (event) => {
       showToast("已确认食材都在家里,暂时不用采购");
       return;
     }
+    track("platform_link_clicked", {
+      cardId: card.id,
+      type: card.type,
+      status: "fallback_copy_shopping_list"
+    });
     copyText(plan.shoppingList.join("\n"));
     showToast("采购清单已复制");
   }
@@ -2389,6 +2456,7 @@ document.body.addEventListener("click", (event) => {
 
 elements.settingsButton.addEventListener("click", openSettingsPage);
 
+track("app_opened", { profileCompleted: state.profileCompleted, view: state.view });
 render();
 initializeFromBackend();
 registerServiceWorker();
