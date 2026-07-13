@@ -1,3 +1,5 @@
+from copy import deepcopy
+from datetime import date
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -33,6 +35,7 @@ class DecisionRequest(BaseModel):
     userId: str = "local-user"
     profile: dict = Field(default_factory=lambda: DEFAULT_PROFILE.copy())
     context: dict = Field(default_factory=lambda: DEFAULT_CONTEXT.copy())
+    forceRegenerate: bool = False
 
 
 class RefreshRequest(BaseModel):
@@ -92,8 +95,14 @@ def create_app(database=None, llm_client=None):
     @app.post("/api/decision/today")
     def today_decision(request: DecisionRequest):
         profile = request.profile or db.get_profile(request.userId) or DEFAULT_PROFILE
-        context = request.context or DEFAULT_CONTEXT
+        context = normalize_decision_context(request.context or DEFAULT_CONTEXT)
         db.save_profile(request.userId, profile)
+
+        if not request.forceRegenerate:
+            cached = db.get_today_decision(request.userId, context["date"])
+            if cached:
+                return cached_decision_response(cached)
+
         decision = build_decision(profile, context, llm_client=llm_client)
         apply_recipe_cache(db, decision)
         return db.save_decision(request.userId, decision)
@@ -178,6 +187,19 @@ def create_app(database=None, llm_client=None):
 
 
 app = create_app()
+
+
+def normalize_decision_context(context):
+    source = {**DEFAULT_CONTEXT, **(context if isinstance(context, dict) else {})}
+    source["date"] = str(source.get("date") or date.today().isoformat())
+    return source
+
+
+def cached_decision_response(decision):
+    response = deepcopy(decision)
+    response["cachedGenerationSource"] = response.get("generationSource", "")
+    response["generationSource"] = "cached"
+    return response
 
 
 def apply_recipe_cache(db, decision):

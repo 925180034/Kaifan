@@ -8,6 +8,7 @@ const fallbackCopy = {
 export function buildGenerationStatus(state = {}) {
   if (state.isGenerating) return { text: "正在按你的画像生成...", state: "loading" };
   if (state.generationError) return { text: state.generationError, state: "error" };
+  if (state.generationSource === "cached") return { text: "已使用今日缓存方案", state: "ready" };
   if (state.generationSource === "llm") return { text: "AI 已根据画像生成", state: "ready" };
   if (state.generationSource === "fallback") {
     return {

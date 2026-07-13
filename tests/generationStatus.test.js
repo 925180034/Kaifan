@@ -18,6 +18,13 @@ test("buildGenerationStatus explains validation fallback without raw reason code
   assert.equal(status.text.includes("llm_validation_failed"), false);
 });
 
+test("buildGenerationStatus explains cached decisions", () => {
+  assert.deepEqual(buildGenerationStatus({ generationSource: "cached", apiAvailable: true }), {
+    text: "已使用今日缓存方案",
+    state: "ready"
+  });
+});
+
 test("buildGenerationStatus preserves loading and error precedence", () => {
   assert.deepEqual(buildGenerationStatus({ isGenerating: true, generationError: "失败" }), {
     text: "正在按你的画像生成...",

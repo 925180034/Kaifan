@@ -323,11 +323,13 @@ class SelectApiTests(unittest.TestCase):
 class FakeLLMClient:
     def __init__(self, cards):
         self.cards = cards
+        self.call_count = 0
 
     def is_configured(self):
         return True
 
     def generate_cards(self, profile, context):
+        self.call_count += 1
         return self.cards
 
 
@@ -385,6 +387,43 @@ def generated_llm_cards():
 
 
 class RecipeCacheApiTests(unittest.TestCase):
+    def test_today_decision_reuses_existing_user_date_decision_without_llm_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "api.sqlite")
+            llm_client = FakeLLMClient(generated_llm_cards())
+            app = create_app(database=db, llm_client=llm_client)
+            today = route_endpoint(app, "/api/decision/today", "POST")
+            request = DecisionRequest(userId="user-cache", profile=DEFAULT_PROFILE, context=DEFAULT_CONTEXT)
+
+            first = today(request)
+            second = today(request)
+
+            self.assertEqual(llm_client.call_count, 1)
+            self.assertEqual(second["decisionId"], first["decisionId"])
+            self.assertEqual(second["generationSource"], "cached")
+            self.assertEqual([card["id"] for card in second["cards"]], [card["id"] for card in first["cards"]])
+
+    def test_today_decision_force_regenerate_bypasses_user_date_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "api.sqlite")
+            llm_client = FakeLLMClient(generated_llm_cards())
+            app = create_app(database=db, llm_client=llm_client)
+            today = route_endpoint(app, "/api/decision/today", "POST")
+            first_request = DecisionRequest(userId="user-force", profile=DEFAULT_PROFILE, context=DEFAULT_CONTEXT)
+            force_request = DecisionRequest(
+                userId="user-force",
+                profile=DEFAULT_PROFILE,
+                context=DEFAULT_CONTEXT,
+                forceRegenerate=True,
+            )
+
+            first = today(first_request)
+            second = today(force_request)
+
+            self.assertEqual(llm_client.call_count, 2)
+            self.assertNotEqual(second["decisionId"], first["decisionId"])
+            self.assertEqual(second["generationSource"], "llm")
+
     def test_today_decision_reuses_cached_cook_recipe_details(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = Database(Path(tmp) / "api.sqlite")

@@ -155,12 +155,25 @@ class Database:
                 "SELECT data_json, selected_card_id, refresh_count FROM decisions WHERE id = ?",
                 (decision_id,),
             ).fetchone()
-        if not row:
-            return None
-        decision = json.loads(row["data_json"])
-        decision["selectedCardId"] = row["selected_card_id"]
-        decision["refreshCount"] = row["refresh_count"]
-        return decision
+        return hydrate_decision_row(row)
+
+    def get_today_decision(self, user_id, date_value):
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT data_json, selected_card_id, refresh_count
+                FROM decisions
+                WHERE user_id = ?
+                ORDER BY updated_at DESC, created_at DESC
+                """,
+                (user_id,),
+            ).fetchall()
+
+        for row in rows:
+            decision = hydrate_decision_row(row)
+            if decision and decision.get("context", {}).get("date") == date_value:
+                return decision
+        return None
 
     def update_decision(self, decision):
         with self.connect() as connection:
@@ -257,6 +270,15 @@ class Database:
                 (cache_key,),
             ).fetchone()
         return json.loads(row["card_json"]) if row else None
+
+
+def hydrate_decision_row(row):
+    if not row:
+        return None
+    decision = json.loads(row["data_json"])
+    decision["selectedCardId"] = row["selected_card_id"]
+    decision["refreshCount"] = row["refresh_count"]
+    return decision
 
 
 def recipe_cache_key(card):

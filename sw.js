@@ -1,4 +1,4 @@
-const CACHE_NAME = "kaifan-pwa-20260713-analytics-report";
+const CACHE_NAME = "kaifan-pwa-20260713-fresh-decision-cache";
 const APP_SHELL_FILES = [
   "/",
   "/index.html",

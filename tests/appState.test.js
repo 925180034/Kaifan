@@ -11,6 +11,7 @@ import {
   completeProfileSync,
   failDecisionRequest,
   finishDecisionRequest,
+  hasFreshTodayDecision,
   markLocalDecisionState,
   replaceDecisionCardState,
   selectDecisionCardState,
@@ -295,6 +296,57 @@ test("failed decision request keeps last good cards visible", () => {
   assert.equal(state.isGenerating, false);
   assert.equal(state.apiAvailable, false);
   assert.equal(state.generationError, "生成失败,已保留上一版");
+});
+
+test("fresh today decisions can be reused without initial regeneration", () => {
+  const state = {
+    decisionId: "decision-today",
+    context: { date: "2026-07-13" },
+    cards: [{ id: "cook-today" }],
+    generationSource: "llm",
+    generationError: ""
+  };
+
+  assert.equal(hasFreshTodayDecision(state, "2026-07-13"), true);
+});
+
+test("stale or empty decisions must be regenerated", () => {
+  assert.equal(
+    hasFreshTodayDecision(
+      {
+        context: { date: "2026-07-12" },
+        cards: [{ id: "cook-yesterday" }],
+        generationError: ""
+      },
+      "2026-07-13"
+    ),
+    false
+  );
+  assert.equal(hasFreshTodayDecision({ context: { date: "2026-07-13" }, cards: [], generationError: "" }, "2026-07-13"), false);
+  assert.equal(
+    hasFreshTodayDecision(
+      {
+        context: { date: "2026-07-13" },
+        cards: [{ id: "cook-error" }],
+        generationSource: "llm",
+        generationError: "生成失败"
+      },
+      "2026-07-13"
+    ),
+    false
+  );
+  assert.equal(
+    hasFreshTodayDecision(
+      {
+        context: { date: "2026-07-13" },
+        cards: [{ id: "sample-card" }],
+        generationSource: "",
+        generationError: ""
+      },
+      "2026-07-13"
+    ),
+    false
+  );
 });
 
 test("selecting a card stores optional action context", () => {

@@ -67,8 +67,8 @@ function formatDetailItem(value) {
   return String(value).trim();
 }
 
-export function fetchTodayDecision({ userId, profile, context }, fetchImpl) {
-  return postJson("/api/decision/today", { userId, profile, context }, fetchImpl);
+export function fetchTodayDecision({ userId, profile, context, forceRegenerate = false }, fetchImpl) {
+  return postJson("/api/decision/today", { userId, profile, context, forceRegenerate }, fetchImpl);
 }
 
 export function fetchProfile(userId, fetchImpl) {

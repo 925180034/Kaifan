@@ -473,6 +473,30 @@ button:disabled {
   text-wrap: balance;
 }
 
+.updating-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  margin-top: 12px;
+  padding: 4px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-on-dark-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.updating-badge span {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+  animation: fd-pulse 1.2s ease-in-out infinite;
+}
+
+
 .hero-reason {
   margin: 8px 0 0;
   color: var(--text-on-dark-secondary);

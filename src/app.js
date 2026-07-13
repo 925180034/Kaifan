@@ -2,7 +2,7 @@ import {
   defaultDailyContext,
   defaultProfile,
   initialDecisionCards
-} from "./sampleData.js?v=20260713-analytics-report";
+} from "./sampleData.js?v=20260713-fresh-decision-cache";
 import {
   applyDecisionState,
   applyMemoryState,
@@ -15,11 +15,13 @@ import {
   shouldRetryMemorySync,
   shouldRetryProfileSync,
   finishDecisionRequest,
+  hasFreshTodayDecision,
   markLocalDecisionState,
   replaceDecisionCardState,
   selectDecisionCardState,
-  startDecisionRequest
-} from "./appState.js?v=20260713-analytics-report";
+  startDecisionRequest,
+  todayDateString
+} from "./appState.js?v=20260713-fresh-decision-cache";
 import {
   buildBudgetAlert,
   buildDecisionTradeoffs,
@@ -33,14 +35,14 @@ import {
   getTopRecommendation,
   rankDecisionCards,
   refreshCard
-} from "./decisionEngine.js?v=20260713-analytics-report";
-import { buildSearchUrl } from "./platformLinks.js?v=20260713-analytics-report";
+} from "./decisionEngine.js?v=20260713-fresh-decision-cache";
+import { buildSearchUrl } from "./platformLinks.js?v=20260713-fresh-decision-cache";
 import {
   applyProfilePreset,
   applyProfileTuningAction,
   buildProfileSummary,
   profilePresets
-} from "./profile.js?v=20260713-analytics-report";
+} from "./profile.js?v=20260713-fresh-decision-cache";
 import {
   buildDailyReview,
   buildFeedbackProfileSuggestion,
@@ -52,29 +54,29 @@ import {
   recordMealFeedback,
   recordFeedbackLearning,
   recordSelectedMeal
-} from "./learning.js?v=20260713-analytics-report";
-import { buildHistorySummary } from "./history.js?v=20260713-analytics-report";
-import { clearState, loadState, saveState } from "./storage.js?v=20260713-analytics-report";
-import { createLatestSync, createMemorySync } from "./memorySync.js?v=20260713-analytics-report";
+} from "./learning.js?v=20260713-fresh-decision-cache";
+import { buildHistorySummary } from "./history.js?v=20260713-fresh-decision-cache";
+import { clearState, loadState, saveState } from "./storage.js?v=20260713-fresh-decision-cache";
+import { createLatestSync, createMemorySync } from "./memorySync.js?v=20260713-fresh-decision-cache";
 import {
   buildActionPlan,
   buildAggregatedShoppingGroups,
   buildAggregatedShoppingList,
   buildShoppingList,
   platformLabel
-} from "./actionPlan.js?v=20260713-analytics-report";
+} from "./actionPlan.js?v=20260713-fresh-decision-cache";
 import {
   favoriteHasRecipeDetails,
   findRecipeCard,
   hydrateFavoriteRecipeDetails,
   isFavoriteMeal,
   toggleFavoriteMeal
-} from "./favorites.js?v=20260713-analytics-report";
-import { buildPrepTimeline } from "./prepTimeline.js?v=20260713-analytics-report";
-import { registerServiceWorker } from "./pwa.js?v=20260713-analytics-report";
-import { escapeHtml } from "./html.js?v=20260713-analytics-report";
-import { buildGenerationStatus } from "./generationStatus.js?v=20260713-analytics-report";
-import { scaleIngredientsForPeople, servingLabel } from "./servings.js?v=20260713-analytics-report";
+} from "./favorites.js?v=20260713-fresh-decision-cache";
+import { buildPrepTimeline } from "./prepTimeline.js?v=20260713-fresh-decision-cache";
+import { registerServiceWorker } from "./pwa.js?v=20260713-fresh-decision-cache";
+import { escapeHtml } from "./html.js?v=20260713-fresh-decision-cache";
+import { buildGenerationStatus } from "./generationStatus.js?v=20260713-fresh-decision-cache";
+import { scaleIngredientsForPeople, servingLabel } from "./servings.js?v=20260713-fresh-decision-cache";
 import {
   fetchMemory,
   fetchProfile,
@@ -86,7 +88,7 @@ import {
   selectDecisionCard,
   submitFeedback,
   trackEvent
-} from "./apiClient.js?v=20260713-analytics-report";
+} from "./apiClient.js?v=20260713-fresh-decision-cache";
 
 const stateKey = "kaifan.mvp.state";
 
@@ -194,6 +196,8 @@ if (!state.userId) {
   state.userId = "local-user";
 }
 
+state.context = { ...defaultDailyContext, ...(state.context ?? {}) };
+state.context.date ??= todayDateString();
 state.view ??= "today";
 state.profileCompleted = Boolean(state.profileCompleted);
 state.profileSyncPending = Boolean(state.profileSyncPending);
@@ -287,10 +291,16 @@ async function initializeFromBackend() {
     render();
     return;
   }
+  if (hasFreshTodayDecision(state)) {
+    persist();
+    render();
+    return;
+  }
   regenerateDecision("initial");
 }
 
 async function hydrateUserState() {
+  const before = hydrationSnapshot();
   await Promise.all([hydrateProfile(), hydrateMemory()]);
   if (shouldRetryProfileSync(state)) {
     syncProfile();
@@ -299,7 +309,21 @@ async function hydrateUserState() {
     syncMemory();
   }
   persist();
-  render();
+  if (before !== hydrationSnapshot()) {
+    render();
+  }
+}
+
+function hydrationSnapshot() {
+  return JSON.stringify({
+    profile: state.profile,
+    recentMeals: state.recentMeals,
+    favoriteMeals: state.favoriteMeals,
+    feedbackLearning: state.feedbackLearning,
+    feedback: state.feedback,
+    profileSyncPending: state.profileSyncPending,
+    memorySyncPending: state.memorySyncPending
+  });
 }
 
 async function hydrateProfile() {
@@ -332,6 +356,7 @@ async function hydrateMemory() {
 
 async function regenerateDecision(reason = "manual") {
   const startedAt = performance.now();
+  state.context.date = todayDateString();
   const requestId = startDecisionRequest(state);
   persist();
   render();
@@ -340,7 +365,8 @@ async function regenerateDecision(reason = "manual") {
     const decision = await fetchTodayDecision({
       userId: state.userId,
       profile: state.profile,
-      context: buildGenerationContext(state.context, state)
+      context: buildGenerationContext(state.context, state),
+      forceRegenerate: reason !== "initial"
     });
     const applied = finishDecisionRequest(state, requestId, decision, cloneCards);
     if (!applied) return;
@@ -513,7 +539,7 @@ function render() {
   elements.profileSummary.textContent = buildProfileSummary(state.profile);
   elements.dateText.textContent = formatTopDate(state.context.dateText);
   renderMood();
-  if (state.isGenerating) {
+  if (state.isGenerating && !state.cards?.length) {
     renderLoadingState();
   } else {
     renderTopRecommendation();
@@ -699,6 +725,7 @@ function renderTopRecommendation() {
       ${clocheIcon()}
       <span>今晚最推荐 · ${escapeHtml(typeLabel)}</span>
     </div>
+    ${state.isGenerating ? updatingBadgeTemplate() : ""}
     <div class="hero-title">${escapeHtml(top.title)}</div>
     ${signalRow(signals)}
     ${preferenceDetailRow(preferenceDetails)}
@@ -707,6 +734,15 @@ function renderTopRecommendation() {
     ${tradeoffGrid(tradeoffs)}
     <p class="hero-reason">${escapeHtml(top.reason)}</p>
     <button class="primary-button" type="button" data-primary="${escapeHtml(top.id)}">别问了，就这个</button>
+  `;
+}
+
+function updatingBadgeTemplate() {
+  return `
+    <div class="updating-badge" role="status">
+      <span></span>
+      正在更新今日方案...
+    </div>
   `;
 }
 
