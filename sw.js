@@ -5,6 +5,7 @@ const APP_SHELL_FILES = [
   "/styles.css",
   "/manifest.webmanifest",
   "/assets/favicon.svg",
+  "/src/upgradeBridge.js",
   "/src/app.js",
   "/src/sampleData.js",
   "/src/appState.js",

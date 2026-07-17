@@ -24,3 +24,10 @@ test("app shell does not depend on Google Fonts", () => {
   assert.doesNotMatch(stylesSource, /fonts\.googleapis\.com|fonts\.gstatic\.com/);
   assert.doesNotMatch(indexSource, />7月6日 周一 · 小雨 18°C</);
 });
+
+test("app shell loads the legacy PWA upgrade bridge before the main app", () => {
+  const indexSource = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+
+  assert.match(indexSource, /<script type="module" src="\.\/src\/upgradeBridge\.js"><\/script>/);
+  assert.ok(indexSource.indexOf("./src/upgradeBridge.js") < indexSource.indexOf("./src/app.js"));
+});

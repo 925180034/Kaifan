@@ -4,6 +4,7 @@ export const serviceWorkerCacheFiles = [
   "/styles.css",
   "/manifest.webmanifest",
   "/assets/favicon.svg",
+  "/src/upgradeBridge.js",
   "/src/app.js",
   "/src/sampleData.js",
   "/src/appState.js",

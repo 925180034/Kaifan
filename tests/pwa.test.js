@@ -12,6 +12,7 @@ test("service worker cache list includes the app shell assets", () => {
     serviceWorkerCacheFiles.slice(0, 5),
     ["/", "/index.html", "/styles.css", "/manifest.webmanifest", "/assets/favicon.svg"]
   );
+  assert.ok(serviceWorkerCacheFiles.includes("/src/upgradeBridge.js"));
 });
 
 test("root service worker precaches exactly the same app shell files", () => {
