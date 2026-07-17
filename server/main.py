@@ -2,14 +2,15 @@ from copy import deepcopy
 from datetime import date
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .database import Database
 from .llm_client import DeepSeekClient
 from .recommender import build_decision, refresh_card
+from .rate_limit import SlidingWindowRateLimiter
 from .sample_data import DEFAULT_CONTEXT, DEFAULT_PROFILE
 
 
@@ -60,14 +61,27 @@ class FeedbackRequest(BaseModel):
     mealSelectedAt: str | None = None
 
 
-def create_app(database=None, llm_client=None):
+def create_app(database=None, llm_client=None, generation_limiter=None, refresh_limiter=None):
     db = database or Database()
     llm_client = llm_client or DeepSeekClient.from_env()
+    generation_limiter = generation_limiter or SlidingWindowRateLimiter(limit=4, window_seconds=60)
+    refresh_limiter = refresh_limiter or SlidingWindowRateLimiter(limit=12, window_seconds=60)
     app = FastAPI(title="Kaifan Dinner Decision Assistant")
+
+    @app.middleware("http")
+    async def session_guard(request: Request, call_next):
+        user_id = await session_user_id(request)
+        if user_id is not None and not db.verify_session(user_id, request.headers.get("X-Kaifan-Session")):
+            return JSONResponse(status_code=401, content={"detail": "Invalid anonymous session"})
+        return await call_next(request)
 
     @app.get("/api/health")
     def health():
         return {"status": "ok"}
+
+    @app.post("/api/session")
+    def create_session():
+        return db.create_session()
 
     @app.get("/api/profile/{user_id}")
     def get_profile(user_id: str):
@@ -103,13 +117,18 @@ def create_app(database=None, llm_client=None):
             if cached:
                 return cached_decision_response(cached)
 
+        if llm_client.is_configured() and not generation_limiter.allow(request.userId):
+            decision = build_decision(profile, context)
+            decision["fallbackReason"] = "rate_limited"
+            return db.save_decision(request.userId, decision)
+
         decision = build_decision(profile, context, llm_client=llm_client)
         apply_recipe_cache(db, decision)
         return db.save_decision(request.userId, decision)
 
     @app.post("/api/decision/{decision_id}/refresh")
     def refresh_decision(decision_id: str, request: RefreshRequest):
-        decision = db.get_decision(decision_id)
+        decision = db.get_decision_for_user(decision_id, request.userId)
         if not decision:
             raise HTTPException(status_code=404, detail="Decision not found")
         if request.type not in {"cook", "takeout", "dine_out"}:
@@ -120,6 +139,8 @@ def create_app(database=None, llm_client=None):
             raise HTTPException(status_code=404, detail="Card not found")
         if current_card.get("type") != request.type:
             raise HTTPException(status_code=400, detail="Refresh type does not match card")
+        if not refresh_limiter.allow(request.userId):
+            raise HTTPException(status_code=429, detail="Refresh limit reached. Please try again shortly.")
 
         refresh_context = {**(decision.get("context") or {}), "mood": request.mood}
         next_card = refresh_card(request.type, request.mood, request.currentId, context=refresh_context)
@@ -131,7 +152,7 @@ def create_app(database=None, llm_client=None):
 
     @app.post("/api/decision/select")
     def select_decision(request: SelectRequest):
-        decision = db.get_decision(request.decisionId)
+        decision = db.get_decision_for_user(request.decisionId, request.userId)
         if not decision:
             raise HTTPException(status_code=404, detail="Decision not found")
         card_ids = {card.get("id") for card in decision.get("cards", []) if isinstance(card, dict)}
@@ -272,3 +293,26 @@ def normalize_memory(memory):
 def list_field(source, key):
     value = source.get(key, [])
     return value if isinstance(value, list) else []
+
+
+async def session_user_id(request):
+    path = request.url.path
+    if path == "/api/session" or path == "/api/health" or not path.startswith("/api/"):
+        return None
+    if path.startswith("/api/profile/") or path.startswith("/api/memory/"):
+        return path.rsplit("/", 1)[-1]
+    protected_post_paths = {
+        "/api/decision/today",
+        "/api/decision/select",
+        "/api/feedback",
+        "/api/events",
+    }
+    if request.method != "POST" or (
+        path not in protected_post_paths and not path.startswith("/api/decision/")
+    ):
+        return None
+    try:
+        payload = await request.json()
+    except ValueError:
+        return ""
+    return str(payload.get("userId") or "")

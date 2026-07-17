@@ -21,7 +21,8 @@ export const serviceWorkerCacheFiles = [
   "/src/apiClient.js",
   "/src/html.js",
   "/src/generationStatus.js",
-  "/src/pwa.js"
+  "/src/pwa.js",
+  "/src/weather.js"
 ];
 
 export async function registerServiceWorker(navigatorObj = globalThis.navigator) {

@@ -1,7 +1,7 @@
-async function postJson(url, payload, fetchImpl = globalThis.fetch) {
+async function postJson(url, payload, fetchImpl = globalThis.fetch, sessionToken = "") {
   const response = await fetchImpl(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: requestHeaders(sessionToken),
     body: JSON.stringify(payload)
   });
 
@@ -12,14 +12,21 @@ async function postJson(url, payload, fetchImpl = globalThis.fetch) {
   return response.json();
 }
 
-async function getJson(url, fetchImpl = globalThis.fetch) {
-  const response = await fetchImpl(url, { method: "GET" });
+async function getJson(url, fetchImpl = globalThis.fetch, sessionToken = "") {
+  const response = await fetchImpl(url, { method: "GET", headers: requestHeaders(sessionToken) });
 
   if (!response.ok) {
     throw await buildApiError(response);
   }
 
   return response.json();
+}
+
+function requestHeaders(sessionToken = "") {
+  return {
+    "Content-Type": "application/json",
+    ...(sessionToken ? { "X-Kaifan-Session": sessionToken } : {})
+  };
 }
 
 async function buildApiError(response) {
@@ -67,39 +74,44 @@ function formatDetailItem(value) {
   return String(value).trim();
 }
 
-export function fetchTodayDecision({ userId, profile, context, forceRegenerate = false }, fetchImpl) {
-  return postJson("/api/decision/today", { userId, profile, context, forceRegenerate }, fetchImpl);
+export function createSession(fetchImpl) {
+  return postJson("/api/session", {}, fetchImpl);
 }
 
-export function fetchProfile(userId, fetchImpl) {
-  return getJson(`/api/profile/${encodeURIComponent(userId)}`, fetchImpl);
+export function fetchTodayDecision({ userId, sessionToken = "", profile, context, forceRegenerate = false }, fetchImpl) {
+  return postJson("/api/decision/today", { userId, profile, context, forceRegenerate }, fetchImpl, sessionToken);
 }
 
-export function saveProfile(userId, profile, fetchImpl) {
-  return postJson(`/api/profile/${encodeURIComponent(userId)}`, { profile }, fetchImpl);
+export function fetchProfile(userId, fetchImpl, sessionToken = "") {
+  return getJson(`/api/profile/${encodeURIComponent(userId)}`, fetchImpl, sessionToken);
 }
 
-export function fetchMemory(userId, fetchImpl) {
-  return getJson(`/api/memory/${encodeURIComponent(userId)}`, fetchImpl);
+export function saveProfile(userId, profile, fetchImpl, sessionToken = "") {
+  return postJson(`/api/profile/${encodeURIComponent(userId)}`, { profile }, fetchImpl, sessionToken);
 }
 
-export function saveMemory(userId, memory, fetchImpl) {
-  return postJson(`/api/memory/${encodeURIComponent(userId)}`, { memory }, fetchImpl);
+export function fetchMemory(userId, fetchImpl, sessionToken = "") {
+  return getJson(`/api/memory/${encodeURIComponent(userId)}`, fetchImpl, sessionToken);
 }
 
-export function selectDecisionCard({ decisionId, userId, cardId }, fetchImpl) {
-  return postJson("/api/decision/select", { decisionId, userId, cardId }, fetchImpl);
+export function saveMemory(userId, memory, fetchImpl, sessionToken = "") {
+  return postJson(`/api/memory/${encodeURIComponent(userId)}`, { memory }, fetchImpl, sessionToken);
 }
 
-export function refreshDecisionCard({ decisionId, userId, type, currentId, mood }, fetchImpl) {
+export function selectDecisionCard({ decisionId, userId, sessionToken = "", cardId }, fetchImpl) {
+  return postJson("/api/decision/select", { decisionId, userId, cardId }, fetchImpl, sessionToken);
+}
+
+export function refreshDecisionCard({ decisionId, userId, sessionToken = "", type, currentId, mood }, fetchImpl) {
   return postJson(
     `/api/decision/${encodeURIComponent(decisionId)}/refresh`,
     { userId, type, currentId, mood },
-    fetchImpl
+    fetchImpl,
+    sessionToken
   );
 }
 
-export function submitFeedback({ decisionId, userId, cardId, tag, createdAt, mealSelectedAt }, fetchImpl) {
+export function submitFeedback({ decisionId, userId, sessionToken = "", cardId, tag, createdAt, mealSelectedAt }, fetchImpl) {
   return postJson(
     "/api/feedback",
     {
@@ -110,11 +122,12 @@ export function submitFeedback({ decisionId, userId, cardId, tag, createdAt, mea
       ...(createdAt ? { createdAt } : {}),
       ...(mealSelectedAt ? { mealSelectedAt } : {})
     },
-    fetchImpl
+    fetchImpl,
+    sessionToken
   );
 }
 
-export function trackEvent({ userId, event, payload = {}, createdAt }, fetchImpl) {
+export function trackEvent({ userId, sessionToken = "", event, payload = {}, createdAt }, fetchImpl) {
   return postJson(
     "/api/events",
     {
@@ -123,6 +136,7 @@ export function trackEvent({ userId, event, payload = {}, createdAt }, fetchImpl
       payload,
       ...(createdAt ? { createdAt } : {})
     },
-    fetchImpl
+    fetchImpl,
+    sessionToken
   );
 }

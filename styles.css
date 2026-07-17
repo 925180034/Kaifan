@@ -1,5 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;600&display=swap");
-
 :root {
   --bg-page: #f6f3ee;
   --surface-card: #ffffff;
@@ -20,7 +18,7 @@
   --accent-out-bg: #e4ebf1;
   --accent-danger: #b4462f;
   --shadow-card: 0 1px 2px rgba(38, 34, 28, 0.04);
-  --font-display: "Noto Serif SC", "Songti SC", serif;
+  --font-display: "Songti SC", "STSong", "SimSun", serif;
   --font-ui: -apple-system, "PingFang SC", "MiSans", "HarmonyOS Sans SC",
     "Noto Sans SC", "Microsoft YaHei", sans-serif;
   color-scheme: light;
@@ -44,6 +42,22 @@ select,
 input,
 textarea {
   font: inherit;
+}
+
+.settings-text-input {
+  width: 100%;
+  height: 48px;
+  margin: 12px 0 16px;
+  padding: 0 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-card);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.settings-text-input:focus {
+  border-color: var(--accent-out);
 }
 
 button {

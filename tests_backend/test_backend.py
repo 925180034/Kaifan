@@ -7,6 +7,7 @@ from pathlib import Path
 from server.database import Database
 from server.main import DecisionRequest, EventRequest, FeedbackRequest, MemoryRequest, ProfileRequest, RefreshRequest, SelectRequest, create_app
 from server.recommender import build_decision
+from server.rate_limit import SlidingWindowRateLimiter
 from server.sample_data import DEFAULT_CONTEXT, DEFAULT_PROFILE, DINE_OUT_OPTIONS, RECIPE_OPTIONS, TAKEOUT_OPTIONS
 
 
@@ -261,7 +262,7 @@ class RefreshApiTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as exc:
                 refresh(
                     decision["decisionId"],
-                    RefreshRequest(type="snack", currentId=decision["cards"][0]["id"], mood="normal"),
+                    RefreshRequest(userId="user-1", type="snack", currentId=decision["cards"][0]["id"], mood="normal"),
                 )
 
             loaded = db.get_decision(decision["decisionId"])
@@ -278,7 +279,7 @@ class RefreshApiTests(unittest.TestCase):
             refresh = route_endpoint(app, "/api/decision/{decision_id}/refresh", "POST")
 
             with self.assertRaises(HTTPException) as exc:
-                refresh(decision["decisionId"], RefreshRequest(type="cook", currentId="missing-card", mood="normal"))
+                refresh(decision["decisionId"], RefreshRequest(userId="user-1", type="cook", currentId="missing-card", mood="normal"))
 
             loaded = db.get_decision(decision["decisionId"])
             self.assertEqual(exc.exception.status_code, 404)
@@ -295,7 +296,7 @@ class RefreshApiTests(unittest.TestCase):
             refresh = route_endpoint(app, "/api/decision/{decision_id}/refresh", "POST")
 
             with self.assertRaises(HTTPException) as exc:
-                refresh(decision["decisionId"], RefreshRequest(type="cook", currentId=takeout["id"], mood="normal"))
+                refresh(decision["decisionId"], RefreshRequest(userId="user-1", type="cook", currentId=takeout["id"], mood="normal"))
 
             loaded = db.get_decision(decision["decisionId"])
             self.assertEqual(exc.exception.status_code, 400)
@@ -582,6 +583,61 @@ class StaticAssetTests(unittest.TestCase):
         response = service_worker()
 
         self.assertEqual(response.media_type, "application/javascript")
+
+
+class SessionTests(unittest.TestCase):
+    def test_issued_session_uses_a_random_user_id_and_rejects_wrong_tokens(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "api.sqlite")
+            identity = db.create_session()
+            self.assertRegex(identity["userId"], r"^[0-9a-f-]{36}$")
+            self.assertGreaterEqual(len(identity["sessionToken"]), 40)
+            self.assertTrue(db.verify_session(identity["userId"], identity["sessionToken"]))
+            self.assertFalse(db.verify_session(identity["userId"], "wrong"))
+            self.assertFalse(db.verify_session("not-a-user", identity["sessionToken"]))
+
+
+class DecisionRateLimitTests(unittest.TestCase):
+    def test_force_regeneration_uses_fallback_after_the_generation_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "api.sqlite")
+            llm_client = FakeLLMClient(generated_llm_cards())
+            limiter = SlidingWindowRateLimiter(limit=1, window_seconds=60, clock=lambda: 0)
+            app = create_app(database=db, llm_client=llm_client, generation_limiter=limiter)
+            today = route_endpoint(app, "/api/decision/today", "POST")
+            request = DecisionRequest(userId="user-rate", profile=DEFAULT_PROFILE, context=DEFAULT_CONTEXT, forceRegenerate=True)
+
+            first = today(request)
+            second = today(request)
+
+            self.assertEqual(first["generationSource"], "llm")
+            self.assertEqual(llm_client.call_count, 1)
+            self.assertEqual(second["generationSource"], "fallback")
+            self.assertEqual(second["fallbackReason"], "rate_limited")
+
+    def test_refresh_limit_rejects_a_second_same_window_request(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "api.sqlite")
+            decision = build_decision(DEFAULT_PROFILE, DEFAULT_CONTEXT)
+            db.save_decision("user-rate", decision)
+            limiter = SlidingWindowRateLimiter(limit=1, window_seconds=60, clock=lambda: 0)
+            app = create_app(database=db, refresh_limiter=limiter)
+            refresh = route_endpoint(app, "/api/decision/{decision_id}/refresh", "POST")
+            cook = next(card for card in decision["cards"] if card["type"] == "cook")
+
+            refreshed = refresh(
+                decision["decisionId"],
+                RefreshRequest(userId="user-rate", type="cook", currentId=cook["id"], mood="normal"),
+            )
+            next_cook = next(card for card in refreshed["cards"] if card["type"] == "cook")
+
+            with self.assertRaises(HTTPException) as exc:
+                refresh(
+                    decision["decisionId"],
+                    RefreshRequest(userId="user-rate", type="cook", currentId=next_cook["id"], mood="normal"),
+                )
+
+            self.assertEqual(exc.exception.status_code, 429)
 
 
 def route_endpoint(app, path, method):

@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { escapeHtml } from "../src/html.js";
 
@@ -13,4 +14,13 @@ test("escapeHtml escapes markup-sensitive characters for template rendering", ()
 test("escapeHtml treats nullish values as empty text", () => {
   assert.equal(escapeHtml(null), "");
   assert.equal(escapeHtml(undefined), "");
+});
+
+test("app shell does not depend on Google Fonts", () => {
+  const indexSource = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  const stylesSource = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+
+  assert.doesNotMatch(indexSource, /fonts\.googleapis\.com|fonts\.gstatic\.com/);
+  assert.doesNotMatch(stylesSource, /fonts\.googleapis\.com|fonts\.gstatic\.com/);
+  assert.doesNotMatch(indexSource, />7月6日 周一 · 小雨 18°C</);
 });

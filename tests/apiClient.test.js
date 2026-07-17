@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   fetchMemory,
   fetchProfile,
+  createSession,
   fetchTodayDecision,
   isRecoverableApiFailure,
   refreshDecisionCard,
@@ -90,12 +91,13 @@ test("isRecoverableApiFailure only falls back for network and server errors", ()
   assert.equal(isRecoverableApiFailure(invalidRequest), false);
 });
 
-test("fetchTodayDecision posts profile and context to the backend", async () => {
+test("fetchTodayDecision posts profile and context with the session token", async () => {
   const { calls, fetchImpl } = createFetchRecorder({ decisionId: "decision-1" });
 
   const result = await fetchTodayDecision(
     {
       userId: "user-1",
+      sessionToken: "session-secret",
       profile: { peopleCount: "2" },
       context: { mood: "normal" }
     },
@@ -105,42 +107,36 @@ test("fetchTodayDecision posts profile and context to the backend", async () => 
   assert.equal(result.decisionId, "decision-1");
   assert.equal(calls[0].url, "/api/decision/today");
   assert.equal(JSON.parse(calls[0].options.body).userId, "user-1");
+  assert.equal(calls[0].options.headers["X-Kaifan-Session"], "session-secret");
 });
 
-test("saveProfile posts to the user profile endpoint", async () => {
+test("createSession starts a new anonymous session without credentials", async () => {
+  const { calls, fetchImpl } = createFetchRecorder({ userId: "user-1", sessionToken: "secret" });
+
+  const session = await createSession(fetchImpl);
+
+  assert.equal(session.userId, "user-1");
+  assert.equal(calls[0].url, "/api/session");
+  assert.equal(calls[0].options.headers["X-Kaifan-Session"], undefined);
+});
+
+test("profile and memory helpers include the anonymous session token", async () => {
   const { calls, fetchImpl } = createFetchRecorder();
 
-  await saveProfile("user-1", { spicyLevel: "mild" }, fetchImpl);
+  await saveProfile("user-1", { spicyLevel: "mild" }, fetchImpl, "session-secret");
+  await fetchProfile("user-1", fetchImpl, "session-secret");
+  await saveMemory("user-1", { recentMeals: [] }, fetchImpl, "session-secret");
+  await fetchMemory("user-1", fetchImpl, "session-secret");
 
   assert.equal(calls[0].url, "/api/profile/user-1");
   assert.equal(JSON.parse(calls[0].options.body).profile.spicyLevel, "mild");
-});
-
-test("fetchProfile gets the user profile endpoint", async () => {
-  const { calls, fetchImpl } = createFetchRecorder({ profile: { spicyLevel: "hot" } });
-
-  const result = await fetchProfile("user-1", fetchImpl);
-
-  assert.equal(result.profile.spicyLevel, "hot");
-  assert.equal(calls[0].url, "/api/profile/user-1");
-  assert.equal(calls[0].options.method, "GET");
-});
-
-test("memory helpers call matching backend endpoints", async () => {
-  const memory = {
-    recentMeals: [{ id: "cook-1", title: "虾仁豆腐饭" }],
-    feedbackLearning: { likedKeywords: ["虾仁"] },
-    feedback: []
-  };
-  const { calls, fetchImpl } = createFetchRecorder({ memory });
-
-  await fetchMemory("user-1", fetchImpl);
-  await saveMemory("user-1", memory, fetchImpl);
-
-  assert.equal(calls[0].url, "/api/memory/user-1");
-  assert.equal(calls[0].options.method, "GET");
-  assert.equal(calls[1].url, "/api/memory/user-1");
-  assert.equal(JSON.parse(calls[1].options.body).memory.recentMeals[0].id, "cook-1");
+  assert.equal(calls[1].url, "/api/profile/user-1");
+  assert.equal(calls[1].options.method, "GET");
+  assert.equal(calls[2].url, "/api/memory/user-1");
+  assert.equal(calls[3].url, "/api/memory/user-1");
+  for (const call of calls) {
+    assert.equal(call.options.headers["X-Kaifan-Session"], "session-secret");
+  }
 });
 
 test("trackEvent posts analytics events to the backend", async () => {
@@ -149,6 +145,7 @@ test("trackEvent posts analytics events to the backend", async () => {
   await trackEvent(
     {
       userId: "user-1",
+      sessionToken: "session-secret",
       event: "card_selected",
       payload: { cardId: "cook-1", source: "today" },
       createdAt: "2026-07-13T20:00:00.000Z"
@@ -163,20 +160,22 @@ test("trackEvent posts analytics events to the backend", async () => {
     payload: { cardId: "cook-1", source: "today" },
     createdAt: "2026-07-13T20:00:00.000Z"
   });
+  assert.equal(calls[0].options.headers["X-Kaifan-Session"], "session-secret");
 });
 
 test("decision mutations call their matching backend endpoints", async () => {
   const { calls, fetchImpl } = createFetchRecorder();
 
-  await selectDecisionCard({ decisionId: "decision-1", userId: "user-1", cardId: "card-1" }, fetchImpl);
+  await selectDecisionCard({ decisionId: "decision-1", userId: "user-1", sessionToken: "session-secret", cardId: "card-1" }, fetchImpl);
   await refreshDecisionCard(
-    { decisionId: "decision-1", userId: "user-1", type: "cook", currentId: "card-1", mood: "lazy" },
+    { decisionId: "decision-1", userId: "user-1", sessionToken: "session-secret", type: "cook", currentId: "card-1", mood: "lazy" },
     fetchImpl
   );
   await submitFeedback(
     {
       decisionId: "decision-1",
       userId: "user-1",
+      sessionToken: "session-secret",
       cardId: "card-1",
       tag: "好吃",
       createdAt: "2026-07-09T19:30:00.000Z",
@@ -196,4 +195,7 @@ test("decision mutations call their matching backend endpoints", async () => {
     createdAt: "2026-07-09T19:30:00.000Z",
     mealSelectedAt: "2026-07-09T12:00:00.000Z"
   });
+  for (const call of calls) {
+    assert.equal(call.options.headers["X-Kaifan-Session"], "session-secret");
+  }
 });

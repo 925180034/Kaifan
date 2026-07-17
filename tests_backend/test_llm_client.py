@@ -345,6 +345,34 @@ class DeepSeekClientTests(unittest.TestCase):
         self.assertEqual(len(attempts), 2)
         self.assertIn("LLM card contains forbidden food: 香菜", attempts[1]["messages"][-1]["content"])
 
+    def test_generate_cards_waits_before_retrying_after_a_validation_failure(self):
+        attempts = []
+        waits = []
+        invalid_cards = valid_cards()
+        invalid_cards[0]["title"] = "香菜虾仁豆腐盖饭"
+        invalid_cards[0]["searchKeywords"] = ["香菜", "虾仁", "豆腐"]
+
+        def transport(url, headers, payload, timeout):
+            attempts.append(payload)
+            return llm_response(invalid_cards if len(attempts) == 1 else valid_cards())
+
+        client = DeepSeekClient(api_key="test-key", transport=transport, sleep=waits.append)
+
+        client.generate_cards(DEFAULT_PROFILE, DEFAULT_CONTEXT)
+
+        self.assertEqual(waits, [0.5])
+
+    def test_generate_cards_rejects_learned_avoided_keywords(self):
+        context = {
+            **DEFAULT_CONTEXT,
+            "feedbackLearning": {"avoidedKeywords": ["虾仁"]},
+        }
+
+        client = DeepSeekClient(api_key="test-key", transport=lambda *args: llm_response(valid_cards()), max_attempts=1)
+
+        with self.assertRaisesRegex(ValueError, "forbidden"):
+            client.generate_cards(DEFAULT_PROFILE, context)
+
     def test_generate_cards_treats_missing_profile_constraint_lists_as_empty(self):
         profile = {**DEFAULT_PROFILE, "allergies": None, "dislikes": None}
 

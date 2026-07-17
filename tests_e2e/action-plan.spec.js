@@ -7,13 +7,18 @@ import {
 } from "../src/sampleData.js";
 
 const stateKey = "kaifan.mvp.state";
+const e2eUserId = "e2e-user";
+const e2eSessionToken = "e2e-session-token";
+const profileRoute = `**/api/profile/${e2eUserId}`;
+const memoryRoute = `**/api/memory/${e2eUserId}`;
 
 let apiProfile = defaultProfile;
 let apiMemory = { recentMeals: [], favoriteMeals: [], feedbackLearning: null, feedback: [] };
 
 function completedState(overrides = {}) {
   return {
-    userId: "local-user",
+    userId: e2eUserId,
+    sessionToken: e2eSessionToken,
     decisionId: null,
     profile: defaultProfile,
     context: defaultDailyContext,
@@ -70,20 +75,24 @@ test.beforeEach(async ({ page }) => {
     topRecommendation: initialDecisionCards[0]
   });
 
-  await page.route("**/api/profile/local-user", async (route) => {
+  await page.route("**/api/session", async (route) => {
+    await route.fulfill({ json: { userId: e2eUserId, sessionToken: e2eSessionToken } });
+  });
+
+  await page.route(profileRoute, async (route) => {
     if (route.request().method() === "POST") {
       const payload = route.request().postDataJSON();
       apiProfile = payload.profile;
-      await route.fulfill({ json: { userId: "local-user", profile: apiProfile } });
+      await route.fulfill({ json: { userId: e2eUserId, profile: apiProfile } });
       return;
     }
-    await route.fulfill({ json: { userId: "local-user", profile: apiProfile } });
+    await route.fulfill({ json: { userId: e2eUserId, profile: apiProfile } });
   });
 
-  await page.route("**/api/memory/local-user", async (route) => {
+  await page.route(memoryRoute, async (route) => {
     await route.fulfill({
       json: {
-        userId: "local-user",
+        userId: e2eUserId,
         memory: apiMemory
       }
     });
@@ -100,6 +109,14 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/feedback", async (route) => {
     await route.fulfill({ json: { ok: true } });
   });
+
+  await page.route("**/api/events", async (route) => {
+    await route.fulfill({ json: { ok: true } });
+  });
+
+  await page.route("**/api/decision/*/refresh", async (route) => {
+    await route.fulfill({ json: buildDecision() });
+  });
 });
 
 test("opens a platform action plan from the dinner cards", async ({ page }) => {
@@ -114,7 +131,7 @@ test("opens a platform action plan from the dinner cards", async ({ page }) => {
   await page.goto("/");
 
   await expect(page).toHaveTitle(/晚餐决策助手/);
-  await expect(page.locator(".date-weather")).toContainText("7月6日");
+  await expect(page.locator(".date-weather")).toContainText(/\d+月\d+日/);
   await expect(page.locator(".top-panel")).toContainText("今晚最推荐");
   await expect(page.locator(".top-panel")).toContainText("匹配高蛋白控油");
   await expect(page.locator(".top-panel")).toContainText("省时");
@@ -227,8 +244,8 @@ test("applies quick profile tuning from the top recommendation", async ({ page }
     favoriteIngredients: ["虾仁", "豆腐", "番茄"],
     cuisinePreferences: ["家常"]
   };
-  await page.unroute("**/api/profile/local-user");
-  await page.route("**/api/profile/local-user", async (route) => {
+  await page.unroute(profileRoute);
+  await page.route(profileRoute, async (route) => {
     if (route.request().method() === "POST") {
       const payload = route.request().postDataJSON();
       await route.fulfill({ json: { userId: "local-user", profile: payload.profile } });

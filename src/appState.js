@@ -159,3 +159,14 @@ export function failDecisionRequest(state, requestId, message) {
   state.generationError = message;
   return true;
 }
+
+export function startCardRefresh(state) {
+  if (state.isRefreshing) return false;
+  state.isRefreshing = true;
+  return true;
+}
+
+export function finishCardRefresh(state) {
+  state.isRefreshing = false;
+  return state;
+}

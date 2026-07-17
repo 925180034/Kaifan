@@ -124,6 +124,33 @@ export function formatListInput(values) {
   return (values ?? []).join("、");
 }
 
+export function profilesEqual(left, right) {
+  return JSON.stringify(normalizeProfileForComparison(left)) === JSON.stringify(normalizeProfileForComparison(right));
+}
+
+function normalizeProfileForComparison(profile) {
+  const source = profile && typeof profile === "object" ? profile : {};
+  return Object.fromEntries(
+    Object.keys(source)
+      .sort()
+      .map((key) => [key, normalizeProfileValue(source[key])])
+  );
+}
+
+function normalizeProfileValue(value) {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map((item) => String(item ?? "").trim()).filter(Boolean))].sort();
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, normalizeProfileValue(value[key])])
+    );
+  }
+  return typeof value === "string" ? value.trim() : value ?? null;
+}
+
 export function buildProfileSummary(profile) {
   const peopleText = `${profile.peopleCount ?? 1} 人`;
   const spicyText = spicyLabels[profile.spicyLevel] ?? "口味不限";

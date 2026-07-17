@@ -1,8 +1,12 @@
+import hashlib
+import hmac
 import json
 import re
+import secrets
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
+from uuid import uuid4
 
 
 class Database:
@@ -78,9 +82,35 @@ class Database:
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
+
+                CREATE TABLE IF NOT EXISTS sessions (
+                    user_id TEXT PRIMARY KEY,
+                    token_hash TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
                 """
             )
             self._ensure_feedback_metadata_columns(connection)
+
+    def create_session(self):
+        user_id = str(uuid4())
+        session_token = secrets.token_urlsafe(32)
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO sessions (user_id, token_hash) VALUES (?, ?)",
+                (user_id, session_token_hash(session_token)),
+            )
+        return {"userId": user_id, "sessionToken": session_token}
+
+    def verify_session(self, user_id, session_token):
+        if not user_id or not session_token:
+            return False
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT token_hash FROM sessions WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+        return bool(row and hmac.compare_digest(row["token_hash"], session_token_hash(session_token)))
 
     def _ensure_feedback_metadata_columns(self, connection):
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(feedback)")}
@@ -154,6 +184,18 @@ class Database:
             row = connection.execute(
                 "SELECT data_json, selected_card_id, refresh_count FROM decisions WHERE id = ?",
                 (decision_id,),
+            ).fetchone()
+        return hydrate_decision_row(row)
+
+    def get_decision_for_user(self, decision_id, user_id):
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT data_json, selected_card_id, refresh_count
+                FROM decisions
+                WHERE id = ? AND user_id = ?
+                """,
+                (decision_id, user_id),
             ).fetchone()
         return hydrate_decision_row(row)
 
@@ -305,3 +347,7 @@ def list_values(value):
     if value is None:
         return []
     return [value]
+
+
+def session_token_hash(value):
+    return hashlib.sha256(str(value).encode("utf-8")).hexdigest()

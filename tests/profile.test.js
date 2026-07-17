@@ -6,7 +6,8 @@ import {
   applyProfileTuningAction,
   buildProfileSummary,
   formatListInput,
-  parseListInput
+  parseListInput,
+  profilesEqual
 } from "../src/profile.js";
 
 test("parses Chinese and Western separators into trimmed unique values", () => {
@@ -78,4 +79,24 @@ test("applies quick profile tuning actions without duplicating list values", () 
   assert.equal(applyProfileTuningAction(profile, "tighten_budget").budgetPerPerson, "15_30");
   assert.equal(applyProfileTuningAction(profile, "prefer_high_protein").nutritionGoal, "高蛋白控油");
   assert.deepEqual(applyProfileTuningAction(profile, "unknown"), profile);
+});
+
+test("compares normalized profiles without treating list order as a change", () => {
+  const saved = {
+    peopleCount: "2",
+    city: "杭州",
+    tasteTags: ["清淡", "少油"],
+    allergies: [],
+    dislikes: ["香菜", "内脏"]
+  };
+  const equivalentDraft = {
+    city: " 杭州 ",
+    peopleCount: "2",
+    tasteTags: ["少油", "清淡", "少油"],
+    allergies: [],
+    dislikes: ["内脏", "香菜"]
+  };
+
+  assert.equal(profilesEqual(saved, equivalentDraft), true);
+  assert.equal(profilesEqual(saved, { ...equivalentDraft, city: "宁波" }), false);
 });

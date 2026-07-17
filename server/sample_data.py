@@ -1,4 +1,5 @@
 DEFAULT_PROFILE = {
+    "city": "",
     "peopleCount": "2",
     "allergies": [],
     "dislikes": ["香菜", "内脏"],
@@ -12,9 +13,9 @@ DEFAULT_PROFILE = {
 }
 
 DEFAULT_CONTEXT = {
-    "dateText": "今天 7月6日 · 小雨 18°C",
+    "dateText": "",
     "mood": "normal",
-    "weather": {"text": "小雨", "temperature": 18, "isRaining": True},
+    "weather": {"text": "天气待更新", "temperature": None, "isRaining": False},
 }
 
 RECIPE_OPTIONS = [

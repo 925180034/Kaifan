@@ -5,6 +5,7 @@ export const moodOptions = [
 ];
 
 export const defaultProfile = {
+  city: "",
   peopleCount: "2",
   allergies: [],
   dislikes: ["香菜", "内脏"],
@@ -18,12 +19,12 @@ export const defaultProfile = {
 };
 
 export const defaultDailyContext = {
-  dateText: "今天 7月6日 · 小雨 18°C",
+  dateText: "",
   mood: "normal",
   weather: {
-    text: "小雨",
-    temperature: 18,
-    isRaining: true
+    text: "天气待更新",
+    temperature: null,
+    isRaining: false
   }
 };
 

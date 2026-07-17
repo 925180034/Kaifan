@@ -2,7 +2,7 @@ import {
   defaultDailyContext,
   defaultProfile,
   initialDecisionCards
-} from "./sampleData.js?v=20260713-fresh-decision-cache";
+} from "./sampleData.js";
 import {
   applyDecisionState,
   applyMemoryState,
@@ -12,6 +12,7 @@ import {
   completeMemorySync,
   completeProfileSync,
   failDecisionRequest,
+  finishCardRefresh,
   shouldRetryMemorySync,
   shouldRetryProfileSync,
   finishDecisionRequest,
@@ -19,9 +20,10 @@ import {
   markLocalDecisionState,
   replaceDecisionCardState,
   selectDecisionCardState,
+  startCardRefresh,
   startDecisionRequest,
   todayDateString
-} from "./appState.js?v=20260713-fresh-decision-cache";
+} from "./appState.js";
 import {
   buildBudgetAlert,
   buildDecisionTradeoffs,
@@ -35,14 +37,15 @@ import {
   getTopRecommendation,
   rankDecisionCards,
   refreshCard
-} from "./decisionEngine.js?v=20260713-fresh-decision-cache";
-import { buildSearchUrl } from "./platformLinks.js?v=20260713-fresh-decision-cache";
+} from "./decisionEngine.js";
+import { buildSearchUrl } from "./platformLinks.js";
 import {
   applyProfilePreset,
   applyProfileTuningAction,
   buildProfileSummary,
-  profilePresets
-} from "./profile.js?v=20260713-fresh-decision-cache";
+  profilePresets,
+  profilesEqual
+} from "./profile.js";
 import {
   buildDailyReview,
   buildFeedbackProfileSuggestion,
@@ -54,33 +57,35 @@ import {
   recordMealFeedback,
   recordFeedbackLearning,
   recordSelectedMeal
-} from "./learning.js?v=20260713-fresh-decision-cache";
-import { buildHistorySummary } from "./history.js?v=20260713-fresh-decision-cache";
-import { clearState, loadState, saveState } from "./storage.js?v=20260713-fresh-decision-cache";
-import { createLatestSync, createMemorySync } from "./memorySync.js?v=20260713-fresh-decision-cache";
+} from "./learning.js";
+import { buildHistorySummary } from "./history.js";
+import { clearState, loadState, saveState } from "./storage.js";
+import { createLatestSync, createMemorySync } from "./memorySync.js";
 import {
   buildActionPlan,
   buildAggregatedShoppingGroups,
   buildAggregatedShoppingList,
   buildShoppingList,
   platformLabel
-} from "./actionPlan.js?v=20260713-fresh-decision-cache";
+} from "./actionPlan.js";
 import {
   favoriteHasRecipeDetails,
   findRecipeCard,
   hydrateFavoriteRecipeDetails,
   isFavoriteMeal,
   toggleFavoriteMeal
-} from "./favorites.js?v=20260713-fresh-decision-cache";
-import { buildPrepTimeline } from "./prepTimeline.js?v=20260713-fresh-decision-cache";
-import { registerServiceWorker } from "./pwa.js?v=20260713-fresh-decision-cache";
-import { escapeHtml } from "./html.js?v=20260713-fresh-decision-cache";
-import { buildGenerationStatus } from "./generationStatus.js?v=20260713-fresh-decision-cache";
-import { scaleIngredientsForPeople, servingLabel } from "./servings.js?v=20260713-fresh-decision-cache";
+} from "./favorites.js";
+import { buildPrepTimeline } from "./prepTimeline.js";
+import { registerServiceWorker } from "./pwa.js";
+import { hydrateWeatherContext } from "./weather.js";
+import { escapeHtml } from "./html.js";
+import { buildGenerationStatus } from "./generationStatus.js";
+import { scaleIngredientsForPeople, servingLabel } from "./servings.js";
 import {
   fetchMemory,
   fetchProfile,
   fetchTodayDecision,
+  createSession,
   isRecoverableApiFailure,
   refreshDecisionCard,
   saveMemory,
@@ -88,13 +93,17 @@ import {
   selectDecisionCard,
   submitFeedback,
   trackEvent
-} from "./apiClient.js?v=20260713-fresh-decision-cache";
+} from "./apiClient.js";
 
 const stateKey = "kaifan.mvp.state";
 
 const feedbackOptions = ["好吃,下次还吃", "太贵", "太麻烦", "没吃饱", "不够满足", "太油/太咸", "不合口味"];
-const memorySync = createMemorySync(saveMemory);
-const profileSync = createLatestSync(saveProfile);
+const memorySync = createMemorySync((identity, memory) =>
+  saveMemory(identity.userId, memory, undefined, identity.sessionToken)
+);
+const profileSync = createLatestSync((identity, profile) =>
+  saveProfile(identity.userId, profile, undefined, identity.sessionToken)
+);
 
 const requiredProfileFields = [
   "peopleCount",
@@ -136,6 +145,7 @@ const profileOptions = {
 };
 
 const settingsDefinitions = {
+  city: { label: "所在城市", group: "今日情境", type: "text", placeholder: "例如 杭州" },
   peopleCount: { label: "用餐人数", group: "基础偏好", type: "single", options: profileOptions.peopleCount },
   taboos: { label: "忌口与过敏", group: "基础偏好", type: "multi", options: profileOptions.taboos, none: "没有忌口" },
   spicyLevel: { label: "辣度", group: "基础偏好", type: "single", options: profileOptions.spicyLevel },
@@ -161,6 +171,7 @@ const tagBackgrounds = {
 
 const state = loadState(stateKey, {
   userId: null,
+  sessionToken: null,
   decisionId: null,
   profile: defaultProfile,
   context: defaultDailyContext,
@@ -175,6 +186,7 @@ const state = loadState(stateKey, {
   memorySyncPending: false,
   onboardingStep: 0,
   draftProfile: null,
+  settingsInitialProfile: null,
   settingsPicker: null,
   clearDataArmed: false,
   checkedIngredients: {},
@@ -187,14 +199,11 @@ const state = loadState(stateKey, {
   generationSource: "",
   fallbackReason: "",
   isGenerating: false,
+  isRefreshing: false,
   generationError: "",
   requestSequence: 0,
   activeRequestId: 0
 });
-
-if (!state.userId) {
-  state.userId = "local-user";
-}
 
 state.context = { ...defaultDailyContext, ...(state.context ?? {}) };
 state.context.date ??= todayDateString();
@@ -204,6 +213,8 @@ state.profileSyncPending = Boolean(state.profileSyncPending);
 state.memorySyncPending = Boolean(state.memorySyncPending);
 state.onboardingStep ??= 0;
 state.draftProfile ??= null;
+state.settingsInitialProfile ??= null;
+state.sessionToken ??= null;
 state.settingsPicker ??= null;
 state.clearDataArmed ??= false;
 state.checkedIngredients ??= {};
@@ -219,7 +230,10 @@ hydrateFavoriteRecipeDetails(state, state.cards);
 state.generationSource ??= "";
 state.fallbackReason ??= "";
 state.isGenerating = Boolean(state.isGenerating);
+state.isRefreshing = Boolean(state.isRefreshing);
 state.generationError ??= "";
+
+let appOpenedTracked = false;
 
 const elements = {
   todayScreen: document.querySelector("#todayScreen"),
@@ -265,9 +279,45 @@ function persist() {
   saveState(stateKey, state);
 }
 
+function hasSession() {
+  return Boolean(state.userId && state.userId !== "local-user" && state.sessionToken);
+}
+
+function sessionIdentity() {
+  return { userId: state.userId, sessionToken: state.sessionToken };
+}
+
+async function ensureSession() {
+  if (hasSession()) return true;
+
+  const localProfile = state.profile;
+  const localMemory = memorySnapshot();
+  try {
+    const session = await createSession();
+    state.userId = session.userId;
+    state.sessionToken = session.sessionToken;
+    persist();
+
+    const migrations = [];
+    if (state.profileCompleted) {
+      migrations.push(saveProfile(state.userId, localProfile, undefined, state.sessionToken));
+    }
+    if (hasMemory(localMemory)) {
+      migrations.push(saveMemory(state.userId, localMemory, undefined, state.sessionToken));
+    }
+    await Promise.all(migrations);
+    return true;
+  } catch {
+    showToast("暂时无法建立匿名会话,已使用本地方案");
+    return false;
+  }
+}
+
 function track(event, payload = {}) {
+  if (!hasSession()) return;
   trackEvent({
     userId: state.userId,
+    sessionToken: state.sessionToken,
     event,
     payload,
     createdAt: new Date().toISOString()
@@ -282,7 +332,13 @@ function applyDecision(decision) {
 }
 
 async function initializeFromBackend() {
-  await hydrateUserState();
+  if (await ensureSession()) {
+    if (!appOpenedTracked) {
+      track("app_opened", { profileCompleted: state.profileCompleted, view: state.view });
+      appOpenedTracked = true;
+    }
+    await hydrateUserState();
+  }
   if (!isProfileReady()) {
     track("onboarding_started", { source: "cold_start" });
     state.view = "onboarding";
@@ -291,12 +347,26 @@ async function initializeFromBackend() {
     render();
     return;
   }
-  if (hasFreshTodayDecision(state)) {
+  if (!hasSession()) {
     persist();
     render();
     return;
   }
-  regenerateDecision("initial");
+  const weatherChanged = await hydrateDailyWeather();
+  if (hasFreshTodayDecision(state) && !weatherChanged) {
+    persist();
+    render();
+    return;
+  }
+  regenerateDecision(weatherChanged ? "weather" : "initial");
+}
+
+async function hydrateDailyWeather() {
+  const result = await hydrateWeatherContext(state.context, state.profile.city);
+  if (!result.changed) return false;
+  state.context = result.context;
+  persist();
+  return true;
 }
 
 async function hydrateUserState() {
@@ -328,7 +398,7 @@ function hydrationSnapshot() {
 
 async function hydrateProfile() {
   try {
-    const response = await fetchProfile(state.userId);
+    const response = await fetchProfile(state.userId, undefined, state.sessionToken);
     applyProfileState(state, response);
   } catch {
     showToast("画像读取失败,已使用本地设置");
@@ -337,7 +407,7 @@ async function hydrateProfile() {
 
 async function hydrateMemory() {
   try {
-    const response = await fetchMemory(state.userId);
+    const response = await fetchMemory(state.userId, undefined, state.sessionToken);
     const memory = response.memory ?? {};
     if (hasMemory(memory)) {
       applyMemoryState(state, memory);
@@ -364,6 +434,7 @@ async function regenerateDecision(reason = "manual") {
   try {
     const decision = await fetchTodayDecision({
       userId: state.userId,
+      sessionToken: state.sessionToken,
       profile: state.profile,
       context: buildGenerationContext(state.context, state),
       forceRegenerate: reason !== "initial"
@@ -471,9 +542,10 @@ function uniqueValues(values) {
 }
 
 function syncMemory() {
+  if (!hasSession()) return;
   beginMemorySync(state);
   persist();
-  memorySync(state.userId, memorySnapshot())
+  memorySync(sessionIdentity(), memorySnapshot())
     .then(() => {
       completeMemorySync(state);
       persist();
@@ -486,9 +558,10 @@ function syncMemory() {
 }
 
 function syncProfile(message = "画像已本地保存,后端稍后同步") {
+  if (!hasSession()) return;
   beginProfileSync(state);
   persist();
-  profileSync(state.userId, state.profile)
+  profileSync(sessionIdentity(), state.profile)
     .then(() => {
       completeProfileSync(state);
       persist();
@@ -789,7 +862,7 @@ function cardTemplate(card, rankingComparison) {
         <p class="card-reason">${escapeHtml(card.reason || card.subtitle || "")}</p>
         <div class="card-actions">
           <button class="card-button" type="button" data-action="${escapeHtml(card.primaryAction.action)}" data-card-id="${escapeHtml(card.id)}">${escapeHtml(primaryLabel(card))}</button>
-          <button class="ghost-button" type="button" ${secondaryAction === "refresh" ? `data-refresh="${escapeHtml(card.type)}"` : `data-copy-card-keywords="${escapeHtml(card.id)}"`} data-card-id="${escapeHtml(card.id)}">${escapeHtml(secondaryLabel)}</button>
+          <button class="ghost-button" type="button" ${secondaryAction === "refresh" ? `data-refresh="${escapeHtml(card.type)}" ${state.isRefreshing ? "disabled" : ""}` : `data-copy-card-keywords="${escapeHtml(card.id)}"`} data-card-id="${escapeHtml(card.id)}">${escapeHtml(secondaryLabel)}</button>
         </div>
       </div>
     </article>
@@ -1018,12 +1091,11 @@ function difficultyLabel(value) {
 }
 
 function formatTopDate(value) {
-  const text = String(value ?? "").replace(/^今天\s*/, "");
-  const parts = text.split(" · ");
-  if (parts.length >= 2 && !parts[0].includes("周")) {
-    return `${parts[0]} 周一 · ${parts.slice(1).join(" · ")}`;
-  }
-  return text || "7月6日 周一 · 小雨 18°C";
+  const text = String(value ?? "").trim();
+  if (text) return text;
+  const now = new Date();
+  const weekday = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][now.getDay()];
+  return `${now.getMonth() + 1}月${now.getDate()}日 ${weekday} · 天气待更新`;
 }
 
 function renderGenerationStatus() {
@@ -1263,6 +1335,20 @@ function settingsPickerTemplate(draft) {
   const key = state.settingsPicker;
   if (!key) return "";
   const definition = settingsDefinitions[key];
+  if (definition.type === "text") {
+    return `
+      <div class="inline-sheet">
+        <button class="inline-sheet-scrim" type="button" data-settings-picker-close aria-label="关闭"></button>
+        <div class="inline-sheet-panel">
+          <div class="sheet-grabber"></div>
+          <h2>${escapeHtml(definition.label)}</h2>
+          <p>仅用于获取当天城市天气，可随时留空或修改。</p>
+          <input class="settings-text-input" id="settingsTextInput" type="text" maxlength="40" placeholder="${escapeHtml(definition.placeholder)}" value="${escapeHtml(draft[key] ?? "")}" />
+          <button class="primary-button" type="button" data-settings-text-save>保存</button>
+        </div>
+      </div>
+    `;
+  }
   const rawOptions = definition.options ?? [];
   const options = rawOptions.map((option) =>
     typeof option === "string" ? { label: option, value: option } : option
@@ -1299,6 +1385,7 @@ function formatSettingValue(key, draft) {
   const value = draftValueForKey(draft, key);
   if (Array.isArray(value)) return value.length ? value.join("、") : "未选";
   const definition = settingsDefinitions[key];
+  if (definition.type === "text") return value || "未设置";
   const option = (definition.options ?? [])
     .map((item) => (typeof item === "string" ? { label: item, value: item } : item))
     .find((item) => item.value === value);
@@ -1347,6 +1434,7 @@ function selectCard(card, actionContext = null) {
     selectDecisionCard({
       decisionId: state.decisionId,
       userId: state.userId,
+      sessionToken: state.sessionToken,
       cardId: card.id
     }).catch(() => showToast("选择已本地记录,后端稍后同步"));
   }
@@ -1758,6 +1846,7 @@ function applyMealFeedback(cardId, tag, options = {}) {
     submitFeedback({
       decisionId: state.decisionId,
       userId: state.userId,
+      sessionToken: state.sessionToken,
       cardId: feedback.cardId,
       tag: feedback.tag,
       createdAt: feedback.createdAt,
@@ -1954,51 +2043,57 @@ function showToast(message) {
 }
 
 async function refreshOne(type, currentId) {
-  if (state.isGenerating) return;
+  if (state.isGenerating || !startCardRefresh(state)) return;
 
-  track("refresh", {
-    scope: "one",
-    decisionId: state.decisionId || "local",
-    type,
-    currentId,
-    mood: state.context.mood
-  });
-  const hadRemoteDecision = Boolean(state.decisionId);
-
-  if (state.decisionId) {
-    try {
-      const decision = await refreshDecisionCard({
-        decisionId: state.decisionId,
-        userId: state.userId,
-        type,
-        currentId,
-        mood: state.context.mood
-      });
-      applyDecision(decision);
-      persist();
-      render();
-      return;
-    } catch (error) {
-      if (!isRecoverableApiFailure(error)) {
-        showToast("换菜请求无效,已保留当前方案");
-        return;
-      }
-      showToast("后端换菜失败,已用本地方案");
-    }
-  }
-
-  const next = refreshCard(type, state.context.mood, currentId);
-  replaceDecisionCardState(state, currentId, next);
-  markLocalDecisionState(
-    state,
-    hadRemoteDecision ? "后端换菜失败,已使用本地换菜方案" : "已使用本地换菜方案"
-  );
-  persist();
   render();
+
+  try {
+    track("refresh", {
+      scope: "one",
+      decisionId: state.decisionId || "local",
+      type,
+      currentId,
+      mood: state.context.mood
+    });
+    const hadRemoteDecision = Boolean(state.decisionId);
+
+    if (state.decisionId) {
+      try {
+        const decision = await refreshDecisionCard({
+          decisionId: state.decisionId,
+          userId: state.userId,
+          sessionToken: state.sessionToken,
+          type,
+          currentId,
+          mood: state.context.mood
+        });
+        applyDecision(decision);
+        persist();
+        return;
+      } catch (error) {
+        if (!isRecoverableApiFailure(error)) {
+          showToast("换菜请求无效,已保留当前方案");
+          return;
+        }
+        showToast("后端换菜失败,已用本地方案");
+      }
+    }
+
+    const next = refreshCard(type, state.context.mood, currentId);
+    replaceDecisionCardState(state, currentId, next);
+    markLocalDecisionState(
+      state,
+      hadRemoteDecision ? "后端换菜失败,已使用本地换菜方案" : "已使用本地换菜方案"
+    );
+    persist();
+  } finally {
+    finishCardRefresh(state);
+    render();
+  }
 }
 
 function refreshAll() {
-  if (state.isGenerating) return;
+  if (state.isGenerating || state.isRefreshing) return;
 
   track("refresh", {
     scope: "all",
@@ -2089,27 +2184,40 @@ function finishOnboarding() {
 
 function openSettingsPage() {
   state.draftProfile = createDraftProfile(state.profile);
+  state.settingsInitialProfile = profileFromDraft(state.draftProfile);
   state.settingsPicker = null;
   state.clearDataArmed = false;
   setView("settings");
 }
 
-function commitSettingsDraft({ regenerate = false } = {}) {
-  state.profile = profileFromDraft(state.draftProfile ?? createDraftProfile(state.profile));
+function commitSettingsDraft({ regenerate = false, sync = true } = {}) {
+  const nextProfile = profileFromDraft(state.draftProfile ?? createDraftProfile(state.profile));
+  const changed = !profilesEqual(state.profile, nextProfile);
+  state.profile = nextProfile;
   state.profileCompleted = true;
   persist();
-  syncProfile("设置已本地保存,后端稍后同步");
+  if (sync && changed) {
+    syncProfile("设置已本地保存,后端稍后同步");
+  }
   if (regenerate) {
     showToast("设置已保存,正在重新生成");
     regenerateDecision("profile");
   }
 }
 
-function closeSettingsPage() {
+async function closeSettingsPage() {
+  const nextProfile = profileFromDraft(state.draftProfile ?? createDraftProfile(state.profile));
+  const changed = !profilesEqual(state.settingsInitialProfile ?? state.profile, nextProfile);
   state.settingsPicker = null;
   state.clearDataArmed = false;
   state.view = "today";
-  commitSettingsDraft({ regenerate: true });
+  commitSettingsDraft({ sync: false });
+  state.settingsInitialProfile = null;
+  if (changed) {
+    await hydrateDailyWeather();
+    showToast("设置已保存,正在重新生成");
+    regenerateDecision("profile");
+  }
   persist();
   render();
 }
@@ -2150,6 +2258,9 @@ function clearLocalData() {
   }
 
   clearState(stateKey);
+  state.userId = null;
+  state.sessionToken = null;
+  state.decisionId = null;
   state.profile = defaultProfile;
   state.profileCompleted = false;
   state.profileSyncPending = false;
@@ -2163,8 +2274,15 @@ function clearLocalData() {
   state.favoriteMeals = [];
   state.feedback = [];
   state.feedbackLearning = null;
+  state.selectedCardId = null;
+  state.selectedActionContext = null;
+  state.cards = cloneCards(initialDecisionCards);
+  state.generationSource = "";
+  state.fallbackReason = "";
+  state.isRefreshing = false;
   persist();
   render();
+  ensureSession();
   showToast("已清空本地数据");
 }
 
@@ -2308,6 +2426,11 @@ elements.settingsScreen.addEventListener("click", (event) => {
     state.settingsPicker = null;
     persist();
     render();
+    return;
+  }
+  if (event.target.closest("[data-settings-text-save]")) {
+    const input = elements.settingsScreen.querySelector("#settingsTextInput");
+    updateSettingsOption(input?.value?.trim() ?? "");
     return;
   }
   if (event.target.closest("[data-settings-none]")) {
@@ -2505,7 +2628,6 @@ document.body.addEventListener("click", (event) => {
 
 elements.settingsButton.addEventListener("click", openSettingsPage);
 
-track("app_opened", { profileCompleted: state.profileCompleted, view: state.view });
 render();
 initializeFromBackend();
 registerServiceWorker();

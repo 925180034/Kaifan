@@ -37,25 +37,21 @@ test("manifest install resources are covered by the service worker cache", () =>
   assert.deepEqual(installResources.filter((file) => !serviceWorkerCacheFiles.includes(file)), []);
 });
 
-test("HTML and module asset versions match the service worker cache", () => {
+test("HTML and module imports are versionless and use a stable offline cache", () => {
   const indexSource = readFileSync(new URL("../index.html", import.meta.url), "utf8");
   const appSource = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
   const serviceWorkerSource = readFileSync(new URL("../sw.js", import.meta.url), "utf8");
-  const cacheVersion = serviceWorkerSource.match(/CACHE_NAME = "kaifan-pwa-([^";]+)"/)?.[1];
   const assetVersions = [...indexSource.matchAll(/\?v=([A-Za-z0-9-]+)/g), ...appSource.matchAll(/\?v=([A-Za-z0-9-]+)/g)].map(
     (match) => match[1]
   );
   const localImports = [...appSource.matchAll(/from "\.\/([^"]+\.js)(?:\?v=([^"]+))?"/g)];
 
-  assert.ok(cacheVersion);
-  assert.ok(assetVersions.length > 0);
+  assert.match(serviceWorkerSource, /const CACHE_NAME = "kaifan-pwa";/);
+  assert.equal(assetVersions.length, 0);
   assert.ok(localImports.length > 0);
-  assert.deepEqual([...new Set(assetVersions)], [cacheVersion]);
-  assert.deepEqual(
-    localImports.filter((match) => !match[2]).map((match) => match[1]),
-    []
-  );
-  assert.deepEqual([...new Set(localImports.map((match) => match[2]))], [cacheVersion]);
+  assert.deepEqual(localImports.filter((match) => match[2]).map((match) => match[1]), []);
+  assert.match(serviceWorkerSource, /fetch\(request, \{ cache: "no-cache" \}\)/);
+  assert.match(serviceWorkerSource, /caches\.match\(request\)/);
 });
 
 test("app imports every appState helper it calls", () => {

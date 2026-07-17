@@ -1,5 +1,6 @@
 import json
 import re
+import time
 import urllib.error
 import urllib.request
 
@@ -34,6 +35,8 @@ class DeepSeekClient:
         timeout=20,
         transport=None,
         max_attempts=2,
+        sleep=time.sleep,
+        retry_delay_seconds=0.5,
     ):
         self.api_key = api_key
         self.model = model
@@ -41,6 +44,8 @@ class DeepSeekClient:
         self.timeout = timeout
         self.transport = transport or self._default_transport
         self.max_attempts = max(1, int(max_attempts))
+        self.sleep = sleep
+        self.retry_delay_seconds = float(retry_delay_seconds)
 
     @classmethod
     def from_env(cls):
@@ -92,10 +97,11 @@ class DeepSeekClient:
                 normalized = normalize_cards(cards)
                 validate_profile_constraints(normalized, profile, context)
                 return normalized
-            except ValueError as exc:
+            except (ValueError, RuntimeError, urllib.error.URLError, TimeoutError, OSError) as exc:
                 last_error = exc
                 if attempt_index == self.max_attempts - 1:
                     raise
+                self.sleep(self.retry_delay_seconds * (attempt_index + 1))
 
         raise last_error or ValueError("DeepSeek card generation failed")
 
@@ -233,7 +239,7 @@ def user_prompt(profile, context):
             }
         ]
     }
-    forbidden_terms = profile_terms(profile)
+    forbidden_terms = profile_terms(profile, context)
     forbidden_text = "、".join(forbidden_terms) if forbidden_terms else "无"
     return (
         "请根据用户画像和今日情境生成晚餐三选一 JSON。\n"
@@ -246,7 +252,7 @@ def user_prompt(profile, context):
 
 
 def retry_prompt(validation_error, profile, context):
-    forbidden_terms = profile_terms(profile)
+    forbidden_terms = profile_terms(profile, context)
     forbidden_text = "、".join(forbidden_terms) if forbidden_terms else "无"
     return (
         "上一次输出未通过校验。\n"
@@ -468,7 +474,7 @@ def normalize_inline_space(value):
 
 
 def validate_profile_constraints(cards, profile, context):
-    forbidden_terms = profile_terms(profile)
+    forbidden_terms = profile_terms(profile, context)
     for card in cards:
         searchable = normalize_text(card_search_text(card))
         for term in forbidden_terms:
@@ -486,12 +492,14 @@ def validate_profile_constraints(cards, profile, context):
             raise ValueError(f"LLM card repeats recent meal: {card.get('title')}")
 
 
-def profile_terms(profile):
+def profile_terms(profile, context=None):
     source = profile or {}
+    feedback_learning = (context or {}).get("feedbackLearning") if isinstance(context, dict) else {}
     raw_terms = [
         *safe_list(source.get("allergies")),
         *safe_list(source.get("dislikes")),
         *safe_list(source.get("taboos")),
+        *safe_list((feedback_learning or {}).get("avoidedKeywords")),
     ]
     expanded_terms = []
     for term in unique_clean_list(raw_terms):

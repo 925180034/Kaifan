@@ -1,4 +1,4 @@
-const CACHE_NAME = "kaifan-pwa-20260713-fresh-decision-cache";
+const CACHE_NAME = "kaifan-pwa";
 const APP_SHELL_FILES = [
   "/",
   "/index.html",
@@ -22,7 +22,8 @@ const APP_SHELL_FILES = [
   "/src/apiClient.js",
   "/src/html.js",
   "/src/generationStatus.js",
-  "/src/pwa.js"
+  "/src/pwa.js",
+  "/src/weather.js"
 ];
 
 self.addEventListener("install", (event) => {
@@ -56,28 +57,23 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.pathname.startsWith("/api/")) return;
 
-  if (request.mode === "navigate") {
-    event.respondWith(
-      fetch(request).catch(() =>
-        caches.match("/", { ignoreSearch: true }).then((cached) =>
-          cached || caches.match("/index.html", { ignoreSearch: true })
-        )
-      )
-    );
-    return;
-  }
-
-  event.respondWith(
-    caches.match(request, { ignoreSearch: true }).then((cached) => {
-      if (cached) return cached;
-
-      return fetch(request).then((response) => {
-        if (url.origin === self.location.origin && response.ok) {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-        }
-        return response;
-      });
-    })
-  );
+  event.respondWith(networkFirst(request, url));
 });
+
+async function networkFirst(request, url) {
+  try {
+    const response = await fetch(request, { cache: "no-cache" });
+    if (url.origin === self.location.origin && response.ok) {
+      const cache = await caches.open(CACHE_NAME);
+      await cache.put(request, response.clone());
+    }
+    return response;
+  } catch {
+    const cached = await caches.match(request);
+    if (cached) return cached;
+    if (request.mode === "navigate") {
+      return (await caches.match("/")) || caches.match("/index.html");
+    }
+    return Response.error();
+  }
+}

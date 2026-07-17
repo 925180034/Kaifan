@@ -10,12 +10,14 @@ import {
   completeMemorySync,
   completeProfileSync,
   failDecisionRequest,
+  finishCardRefresh,
   finishDecisionRequest,
   hasFreshTodayDecision,
   markLocalDecisionState,
   replaceDecisionCardState,
   selectDecisionCardState,
   shouldRetryMemorySync,
+  startCardRefresh,
   startDecisionRequest
 } from "../src/appState.js";
 
@@ -249,6 +251,18 @@ test("starting a decision request marks generation as active", () => {
   assert.equal(state.activeRequestId, 1);
   assert.equal(state.isGenerating, true);
   assert.equal(state.generationError, "");
+});
+
+test("card refresh guard only allows one active replacement", () => {
+  const state = { isRefreshing: false };
+
+  assert.equal(startCardRefresh(state), true);
+  assert.equal(state.isRefreshing, true);
+  assert.equal(startCardRefresh(state), false);
+
+  finishCardRefresh(state);
+  assert.equal(state.isRefreshing, false);
+  assert.equal(startCardRefresh(state), true);
 });
 
 test("stale decision responses do not replace newer cards", () => {
